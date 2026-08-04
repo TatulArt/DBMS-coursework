@@ -1,0 +1,18 @@
+# Сборка
+build/
+bin/
+*.o
+*.a
+*.so
+_deps
+
+# Исполняемые файлы и IDE
+.vscode/
+.idea/
+*.user
+*.swp
+
+# Генераты Flex / Bison (они должны создаваться в build/)
+*.flex.cpp
+*.tab.cpp
+*.tab.hpp
