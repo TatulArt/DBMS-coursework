@@ -1,4 +1,9 @@
-add_executable(dbms_tests test_types.cpp)
+add_executable(dbms_tests 
+    test_types.cpp 
+    test_serializer.cpp
+    test_storage_pipeline.cpp
+)
+
 target_link_libraries(dbms_tests PRIVATE dbms_core gtest_main)
 
 include(GoogleTest)
