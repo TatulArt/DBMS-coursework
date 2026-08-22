@@ -1,239 +1,151 @@
-#ifndef TYPES_H
-#define TYPES_H
+#pragma once
 
-#include <string>
-#include <vector>
-#include <variant>
-#include <optional>
-#include <memory>
-#include <iostream>
-#include <sstream>
-#include <stdexcept>
 #include <cstdint>
+#include <vector>
+#include <optional>
+#include <variant>
+#include <string>
+#include <iostream>
 
-// ============================================================================
-// 1. СТАТУСЫ И ОШИБКИ (STATUS SYSTEM)
-// ============================================================================
+// ============================================================
+// 1. ТИПЫ ДЛЯ ХРАНЕНИЯ НА ДИСКЕ
+// ============================================================
 
-enum class StatusCode {
-    OK = 0,
-    DatabaseNotFound,
-    DatabaseAlreadyExists,
-    TableNotFound,
-    TableAlreadyExists,
-    ColumnNotFound,
-    DuplicateColumn,
-    NullConstraintViolation,
-    UniqueConstraintViolation,
-    TypeMismatch,
-    IOError,
-    CorruptedData,
-    RecordNotFound,
-    InvalidArgument
+using PageId = uint32_t;
+
+struct RecordID {
+    PageId page_id;
+    uint16_t slot_id;
 };
 
-struct Status {
-    StatusCode code{StatusCode::OK};
-    std::string message;
+// Алиас для совместимости
+using RecordId = RecordID;
 
-    static Status OK() {
-        return Status{StatusCode::OK, ""};
+// ============================================================
+// 2. ТИПЫ ДЛЯ ДАННЫХ (Value и ColumnDef)
+// ============================================================
+
+enum class ColType { INT, STRING };
+
+// Алиас для совместимости со storage
+using ColumnType = ColType;
+
+// Основной тип значения: NULL, int или string
+using Value = std::optional<std::variant<int, std::string>>;
+
+// Вспомогательные функции для работы с Value
+namespace val {
+    // camelCase (основные)
+    inline bool isNull(const Value& v) { return !v.has_value(); }
+    inline bool isInt(const Value& v) { return v.has_value() && std::holds_alternative<int>(*v); }
+    inline bool isString(const Value& v) { return v.has_value() && std::holds_alternative<std::string>(*v); }
+
+    inline int getInt(const Value& v) { return std::get<int>(*v); }
+    inline const std::string& getString(const Value& v) { return std::get<std::string>(*v); }
+    
+    // snake_case (для совместимости со storage)
+    inline bool is_null(const Value& v) { return isNull(v); }
+    inline int get_int(const Value& v) { return getInt(v); }
+    inline const std::string& get_string(const Value& v) { return getString(v); }
+    
+    // Для совместимости
+    inline Value Null() { return std::nullopt; }
+    
+    inline std::string to_string(const Value& v) {
+        if (isNull(v)) return "NULL";
+        if (isInt(v)) return std::to_string(getInt(v));
+        if (isString(v)) return getString(v);
+        return "?";
     }
-
-    static Status Error(StatusCode code, const std::string& message) {
-        return Status{code, message};
-    }
-
-    bool ok() const {
-        return code == StatusCode::OK;
-    }
-};
-
-template<typename T>
-class Result {
-private:
-    Status status_;
-    std::optional<T> value_;
-
-public:
-    Result(T value) : status_(Status::OK()), value_(std::move(value)) {}
-    Result(Status status) : status_(std::move(status)), value_(std::nullopt) {}
-
-    static Result<T> Error(StatusCode code, const std::string& message) {
-        return Result<T>(Status::Error(code, message));
-    }
-
-    bool ok() const { return status_.ok(); }
-    const Status& status() const { return status_; }
-
-    const T& value() const {
-        if (!ok()) {
-            throw std::runtime_error("Attempted to access value of unsuccessful Result: " + status_.message);
-        }
-        return *value_;
-    }
-
-    T& value() {
-        if (!ok()) {
-            throw std::runtime_error("Attempted to access value of unsuccessful Result: " + status_.message);
-        }
-        return *value_;
-    }
-};
-
-// ============================================================================
-// 2. ИСКЛЮЧЕНИЯ И ТИПЫ ДАННЫХ
-// ============================================================================
-
-class TypeError : public std::runtime_error {
-public:
-    explicit TypeError(const std::string& message) : std::runtime_error(message) {}
-};
-
-enum class ColumnType {
-    Int,
-    String
-};
-
-inline std::string columnTypeToString(ColumnType type) {
-    switch (type) {
-        case ColumnType::Int: return "INT";
-        case ColumnType::String: return "STRING";
-    }
-    return "UNKNOWN";
 }
 
-// Определение структуры колонки (Метаданные схемы)
-struct ColumnDef {
-    std::string name;
-    ColumnType type;
-    bool is_nullable{true};
-    bool is_indexed{false};
-};
+// Сравнение двух Value (для WHERE)
+inline bool valueLess(const Value& a, const Value& b) {
+    if (!a || !b) return false;
+    if (val::isInt(a) && val::isInt(b)) return val::getInt(a) < val::getInt(b);
+    if (val::isString(a) && val::isString(b)) return val::getString(a) < val::getString(b);
+    return false;
+}
 
-// ============================================================================
-// 3. КЛАСС VALUE (std::variant wrapper)
-// ============================================================================
+inline bool valueEqual(const Value& a, const Value& b) {
+    if (!a && !b) return true;
+    if (!a || !b) return false;
+    return *a == *b;
+}
 
-// std::monostate представляет NULL в SQL
-using RawValue = std::variant<std::monostate, int32_t, std::string>;
-
-class Value {
-public:
-    RawValue data;
-
-    // Конструкторы
-    Value() : data(std::monostate{}) {}                             // NULL value
-    Value(int32_t val) : data(val) {}                               // INT
-    Value(const std::string& val) : data(val) {}                    // STRING
-    Value(const char* val) : data(std::string(val)) {}              // C-string -> STRING
-
-    // Фабричный метод для явного NULL
-    static Value Null() {
-        return Value();
-    }
-
-    // Проверки типа
-    bool is_null() const {
-        return std::holds_alternative<std::monostate>(data);
-    }
-
-    ColumnType get_type() const {
-        if (std::holds_alternative<int32_t>(data)) return ColumnType::Int;
-        if (std::holds_alternative<std::string>(data)) return ColumnType::String;
-        throw TypeError("Cannot retrieve ColumnType for a NULL Value");
-    }
-
-    // Извлечение значений
-    int32_t get_int() const {
-        if (!std::holds_alternative<int32_t>(data)) {
-            throw TypeError("Value is not an INT");
-        }
-        return std::get<int32_t>(data);
-    }
-
-    const std::string& get_string() const {
-        if (!std::holds_alternative<std::string>(data)) {
-            throw TypeError("Value is not a STRING");
-        }
-        return std::get<std::string>(data);
-    }
-
-    // Преобразование в строку для вывода
-    std::string to_string() const {
-        if (is_null()) return "NULL";
-        if (std::holds_alternative<int32_t>(data)) {
-            return std::to_string(std::get<int32_t>(data));
-        }
-        return std::get<std::string>(data);
-    }
-
-    // Логика сравнения
-    bool operator==(const Value& other) const {
-        if (is_null() && other.is_null()) return true;
-        if (is_null() || other.is_null()) return false;
-        
-        if (data.index() != other.data.index()) {
-            throw TypeError("Type mismatch in comparison: cannot compare different column types");
-        }
-        return data == other.data;
-    }
-
-    bool operator!=(const Value& other) const {
-        return !(*this == other);
-    }
-
-    bool operator<(const Value& other) const {
-        if (is_null() && !other.is_null()) return true;
-        if (!is_null() && other.is_null()) return false;
-        if (is_null() && other.is_null()) return false;
-
-        if (data.index() != other.data.index()) {
-            throw TypeError("Type mismatch in comparison: cannot compare different column types");
-        }
-        return data < other.data;
-    }
-
-    bool operator<=(const Value& other) const {
-        return (*this < other) || (*this == other);
-    }
-
-    bool operator>(const Value& other) const {
-        return !(*this <= other);
-    }
-
-    bool operator>=(const Value& other) const {
-        return !(*this < other);
-    }
-};
-
-inline std::ostream& operator<<(std::ostream& os, const Value& val) {
-    os << val.to_string();
+// Оператор вывода для Value
+inline std::ostream& operator<<(std::ostream& os, const Value& v) {
+    os << val::to_string(v);
     return os;
 }
 
-// ============================================================================
-// 4. ФИЗИЧЕСКАЯ ИДЕНТИФИКАЦИЯ ЗАПИСЕЙ И ЗАПИСЬ (RECORD)
-// ============================================================================
+// ============================================================
+// 3. ОПРЕДЕЛЕНИЕ КОЛОНКИ
+// ============================================================
 
-// Уникальный адрес строки внутри СУБД (Номер страницы + Индекс слота)
-struct RecordId {
-    uint32_t page_id{0};
-    uint16_t slot_id{0};
-
-    bool operator==(const RecordId& other) const {
-        return page_id == other.page_id && slot_id == other.slot_id;
-    }
-
-    bool operator!=(const RecordId& other) const {
-        return !(*this == other);
-    }
+struct ColumnDef {
+    std::string name;
+    ColType type;
+    bool notNull = false;
+    bool indexed = false;
+    Value defaultValue;
+    bool is_nullable = true;  // для совместимости со storage
 };
 
-// Запись в СУБД (Адрес + Набор полей)
+// ============================================================
+// 4. СТАТУСЫ И РЕЗУЛЬТАТЫ
+// ============================================================
+
+enum class StatusCode {
+    OK,
+    IOError,
+    InvalidArgument,
+    NotFound,
+    CorruptedData,
+    RecordNotFound
+};
+
+struct Status {
+    StatusCode code;
+    std::string message;
+
+    static Status OK() { return {StatusCode::OK, ""}; }
+    static Status Error(StatusCode c, const std::string& msg) { return {c, msg}; }
+
+    bool ok() const { return code == StatusCode::OK; }
+    std::string error() const { return message; }
+};
+
+template<typename T>
+struct Result {
+private:
+    Status status_;
+    T value_;
+    bool hasValue_ = false;
+
+public:
+    Result() : status_(Status::OK()), hasValue_(false) {}
+    Result(const T& v) : status_(Status::OK()), value_(v), hasValue_(true) {}
+    Result(Status s) : status_(s), hasValue_(false) {}
+
+    bool ok() const { return status_.ok(); }
+    const Status& status() const { return status_; }
+    const T& value() const { return value_; }
+    T& value() { return value_; }
+};
+
+// ============================================================
+// 5. ЗАПИСЬ
+// ============================================================
+
 struct Record {
-    RecordId id;
+    RecordID id;
     std::vector<Value> fields;
 };
 
-#endif // TYPES_H
+// ============================================================
+// 6. ДЛЯ СОВМЕСТИМОСТИ СО STORAGE
+// ============================================================
+
+// Функция-заглушка для Value::Null()
+inline Value Value_Null() { return std::nullopt; }
