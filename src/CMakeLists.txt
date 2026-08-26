@@ -14,8 +14,10 @@ add_library(dbms_core
     storage/record_manager.cpp
     storage/serializer.h
     storage/serializer.cpp
-    index/b_plus_tree.h         # <-- Наш заголовок
+    index/b_plus_tree.h
     index/b_plus_tree.cpp
+    index/index_manager.h
+    index/index_manager.cpp
     ${BISON_SqlParser_OUTPUTS}
     ${FLEX_SqlLexer_OUTPUTS}
 )
