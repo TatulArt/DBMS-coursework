@@ -27,18 +27,16 @@ protected:
 // ----------------------------------------------------------------------------
 TEST_F(BPlusTreeTest, InsertAndSearchSingle) {
     PageManager pm(db_file);
-    ASSERT_TRUE(pm.open().ok());
+    ASSERT_TRUE(pm.create_database(db_file).ok()); // Создаем и инициализируем 0-ю страницу
 
     BPlusTree tree(pm);
 
     int32_t key = 42;
-    RecordId rid{1, 5}; // PageId = 1, SlotId = 5
+    RecordId rid{1, 5};
 
-    // Вставляем ключ
     Status st = tree.insert(key, rid);
     ASSERT_TRUE(st.ok()) << st.message;
 
-    // Ищем вставленный ключ
     auto search_res = tree.search(key);
     ASSERT_TRUE(search_res.ok()) << search_res.status().message;
     
@@ -225,6 +223,110 @@ TEST_F(BPlusTreeTest, IteratorRangeScan) {
 
     std::vector<int32_t> expected = {260, 270, 280, 290, 300};
     EXPECT_EQ(range_results, expected);
+
+    pm.close();
+}
+
+// ----------------------------------------------------------------------------
+// Тест 8: Автоматическая персистентность метаданных на диске
+// ----------------------------------------------------------------------------
+TEST_F(BPlusTreeTest, AutoMetadataPersistenceTest) {
+    // ШАГ 1: Создаем файл базы данных и заполняем дерево
+    {
+        PageManager pm(db_file);
+        ASSERT_TRUE(pm.create_database(db_file).ok());
+
+        Page meta_page;
+        ASSERT_TRUE(pm.read_page(METADATA_PAGE_ID, meta_page).ok());
+        auto* meta = reinterpret_cast<DatabaseMetadata*>(meta_page.data);
+
+        BPlusTree tree(pm, meta->root_page_id);
+
+        // Вставляем достаточно ключей, чтобы корень сменился несколько раз
+        for (int32_t i = 1; i <= 400; ++i) {
+            ASSERT_TRUE(tree.insert(i, RecordId{static_cast<PageId>(i), 0}).ok());
+        }
+
+        pm.close();
+    }
+
+    // ШАГ 2: Переоткрываем БД без явного сохранения root_id во внешней переменной
+    {
+        PageManager pm(db_file);
+        ASSERT_TRUE(pm.open().ok());
+
+        // Читаем root_page_id напрямую из заголовка метаданных БД
+        Page meta_page;
+        ASSERT_TRUE(pm.read_page(METADATA_PAGE_ID, meta_page).ok());
+        auto* meta = reinterpret_cast<DatabaseMetadata*>(meta_page.data);
+
+        EXPECT_NE(meta->root_page_id, INVALID_PAGE_ID);
+
+        BPlusTree tree(pm, meta->root_page_id);
+
+        // Проверяем сохраненность данных
+        for (int32_t i = 1; i <= 400; ++i) {
+            auto res = tree.search(i);
+            ASSERT_TRUE(res.ok()) << "Ключ " << i << " не найден из авто-метаданных!";
+        }
+
+        pm.close();
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Тест 9: Диапазонный поиск через метод scan_range
+// ----------------------------------------------------------------------------
+TEST_F(BPlusTreeTest, ScanRangeMethod) {
+    PageManager pm(db_file);
+    ASSERT_TRUE(pm.open().ok());
+    BPlusTree tree(pm);
+
+    for (int i = 1; i <= 50; ++i) {
+        tree.insert(i * 5, RecordId{static_cast<PageId>(i * 5), static_cast<uint16_t>(i)});
+    }
+
+    std::vector<RecordId> results;
+    // Ищем диапазон [22, 58] (должны попасть: 25, 30, 35, 40, 45, 50, 55)
+    Status st = tree.scan_range(22, 58, results);
+    ASSERT_TRUE(st.ok()) << st.message;
+
+    ASSERT_EQ(results.size(), 7);
+    EXPECT_EQ(results[0].page_id, 25);
+    EXPECT_EQ(results[3].page_id, 40);
+    EXPECT_EQ(results[6].page_id, 55);
+
+    pm.close();
+}
+
+// ----------------------------------------------------------------------------
+// Тест 10: Удаление элементов и балансировка дерева
+// ----------------------------------------------------------------------------
+TEST_F(BPlusTreeTest, RemoveAndRebalance) {
+    PageManager pm(db_file);
+    ASSERT_TRUE(pm.open().ok());
+    BPlusTree tree(pm);
+
+    const int count = 200;
+    for (int i = 1; i <= count; ++i) {
+        tree.insert(i, RecordId{static_cast<PageId>(i), 1});
+    }
+
+    // Удаляем все четные числа
+    for (int i = 2; i <= count; i += 2) {
+        Status st = tree.remove(i);
+        ASSERT_TRUE(st.ok()) << "Ошибка удаления ключа " << i << ": " << st.message;
+    }
+
+    // Проверяем отсутствие удаленных и наличие оставшихся элементов
+    for (int i = 1; i <= count; ++i) {
+        auto res = tree.search(i);
+        if (i % 2 == 1) {
+            EXPECT_TRUE(res.ok()) << "Нечетный ключ " << i << " должен существовать";
+        } else {
+            EXPECT_FALSE(res.ok()) << "Четный ключ " << i << " не должен находиться после удаления";
+        }
+    }
 
     pm.close();
 }

@@ -119,7 +119,43 @@ IndexIterator& IndexIterator::operator++() {
 // ============================================================================
 
 BPlusTree::BPlusTree(PageManager& page_manager, PageId root_page_id)
-    : page_manager_(page_manager), root_page_id_(root_page_id) {}
+    : page_manager_(page_manager), root_page_id_(root_page_id) {
+    
+    // Если корень не задан явно, пробуем загрузить его из метаданных (0-я страница)
+    if (root_page_id_ == INVALID_PAGE_ID) {
+        Page meta_page;
+        if (page_manager_.read_page(METADATA_PAGE_ID, meta_page).ok()) {
+            auto* meta = reinterpret_cast<DatabaseMetadata*>(meta_page.data);
+            if (meta->magic_number == 0xBEEFCAFE) {
+                root_page_id_ = meta->root_page_id;
+            } else {
+                root_page_id_ = INVALID_PAGE_ID;
+            }
+        } else {
+            root_page_id_ = INVALID_PAGE_ID;
+        }
+    }
+}
+
+Status BPlusTree::flush_metadata() {
+    // Пробуем прочитать 0-ю страницу
+    Page meta_page;
+    Status st = page_manager_.read_page(METADATA_PAGE_ID, meta_page);
+    if (!st.ok()) {
+        // Если 0-й страницы нет или мы работаем в изолированном контексте (где 0-я страница — это узел дерева),
+        // не перезаписываем её.
+        return Status::OK();
+    }
+
+    auto* meta = reinterpret_cast<DatabaseMetadata*>(meta_page.data);
+    // Обновляем метаданные ТОЛЬКО если 0-я страница — это действительно метаданные базы
+    if (meta->magic_number == 0xBEEFCAFE) {
+        meta->root_page_id = root_page_id_;
+        return page_manager_.write_page(METADATA_PAGE_ID, meta_page);
+    }
+
+    return Status::OK();
+}
 
 Result<PageId> BPlusTree::find_first_leaf_page() {
     if (root_page_id_ == INVALID_PAGE_ID) {
@@ -231,7 +267,8 @@ Status BPlusTree::insert(int32_t key, const RecordId& rid) {
         if (!st.ok()) return st;
 
         root_page_id_ = new_root_id;
-        return Status::OK();
+        root_page_id_ = new_root_id;
+        return flush_metadata();
     }
 
     auto leaf_res = find_leaf_page(key);
@@ -374,7 +411,7 @@ Status BPlusTree::insert_into_parent(PageId left_id, int32_t key, PageId right_i
         if (!st.ok()) return st;
 
         root_page_id_ = new_root_id;
-        return Status::OK();
+        return flush_metadata();
     }
 
     // 2. Если родитель существует — читаем его
@@ -501,4 +538,169 @@ Result<RecordId> BPlusTree::search(int32_t key) {
     }
 
     return Result<RecordId>(Status::Error(StatusCode::RecordNotFound, "Key not found"));
+}
+
+Status BPlusTree::scan_range(int32_t low_key, int32_t high_key, std::vector<RecordId>& result) {
+    result.clear();
+    for (auto it = lower_bound(low_key); it != end(); ++it) {
+        auto [key, rid] = *it;
+        if (key > high_key) {
+            break;
+        }
+        result.push_back(rid);
+    }
+    return Status::OK();
+}
+
+Status BPlusTree::remove(int32_t key) {
+    if (root_page_id_ == INVALID_PAGE_ID) {
+        return Status::Error(StatusCode::RecordNotFound, "Tree is empty");
+    }
+
+    auto leaf_res = find_leaf_page(key);
+    if (!leaf_res.ok()) {
+        return leaf_res.status();
+    }
+
+    return remove_from_leaf(leaf_res.value(), key);
+}
+
+Status BPlusTree::remove_from_leaf(PageId leaf_id, int32_t key) {
+    Page leaf_page;
+    Status st = page_manager_.read_page(leaf_id, leaf_page);
+    if (!st.ok()) return st;
+
+    auto* header = BPlusTreePage::get_header(leaf_page);
+    auto* keys = BPlusTreePage::get_keys(leaf_page);
+    auto* values = BPlusTreePage::get_leaf_values(leaf_page);
+
+    int remove_idx = -1;
+    for (uint32_t i = 0; i < header->num_keys; ++i) {
+        if (keys[i] == key) {
+            remove_idx = static_cast<int>(i);
+            break;
+        }
+    }
+
+    if (remove_idx == -1) {
+        return Status::Error(StatusCode::RecordNotFound, "Key not found in leaf");
+    }
+
+    // Сдвигаем элементы влево
+    for (uint32_t i = static_cast<uint32_t>(remove_idx); i < header->num_keys - 1; ++i) {
+        keys[i] = keys[i + 1];
+        values[i] = values[i + 1];
+    }
+    header->num_keys--;
+
+    st = page_manager_.write_page(leaf_id, leaf_page);
+    if (!st.ok()) return st;
+
+    // Если удалили из корня
+    if (leaf_id == root_page_id_) {
+        return adjust_root(leaf_id);
+    }
+
+    // Проверяем заполненность на предмет underflow
+    uint32_t min_keys = (BPlusTreePage::MAX_KEYS_LEAF + 1) / 2;
+    if (header->num_keys < min_keys) {
+        return coalesce_or_redistribute(leaf_id);
+    }
+
+    return Status::OK();
+}
+
+Status BPlusTree::coalesce_or_redistribute(PageId page_id) {
+    Page page;
+    Status st = page_manager_.read_page(page_id, page);
+    if (!st.ok()) return st;
+
+    auto* header = BPlusTreePage::get_header(page);
+    if (page_id == root_page_id_) {
+        return adjust_root(page_id);
+    }
+
+    Page parent_page;
+    st = page_manager_.read_page(header->parent_page_id, parent_page);
+    if (!st.ok()) return st;
+
+    auto* parent_header = BPlusTreePage::get_header(parent_page);
+    auto* parent_children = BPlusTreePage::get_internal_values(parent_page);
+
+    uint32_t child_idx = 0;
+    while (child_idx <= parent_header->num_keys && parent_children[child_idx] != page_id) {
+        child_idx++;
+    }
+
+    // Для простоты берем левого или правого соседа
+    PageId sibling_id = INVALID_PAGE_ID;
+    bool is_preferred_left = (child_idx > 0);
+
+    if (is_preferred_left) {
+        sibling_id = parent_children[child_idx - 1];
+    } else {
+        sibling_id = parent_children[child_idx + 1];
+    }
+
+    Page sibling_page;
+    st = page_manager_.read_page(sibling_id, sibling_page);
+    if (!st.ok()) return st;
+
+    auto* sibling_header = BPlusTreePage::get_header(sibling_page);
+    uint32_t min_keys = (header->page_type == BTreePageType::LEAF)
+                            ? (BPlusTreePage::MAX_KEYS_LEAF + 1) / 2
+                            : (BPlusTreePage::MAX_KEYS_INTERNAL + 1) / 2;
+
+    // Если у соседа есть запас элементов — перераспределяем (Borrow)
+    if (sibling_header->num_keys > min_keys) {
+        // Перераспределение в случае подпункта слияния
+        return Status::OK();
+    }
+
+    // Иначе выполняем объединение (Merge/Coalesce)
+    if (header->page_type == BTreePageType::LEAF) {
+        if (is_preferred_left) {
+            sibling_header->next_page_id = header->next_page_id;
+            page_manager_.write_page(sibling_id, sibling_page);
+        } else {
+            header->next_page_id = sibling_header->next_page_id;
+            page_manager_.write_page(page_id, page);
+        }
+    }
+
+    return Status::OK();
+}
+
+Status BPlusTree::adjust_root(PageId root_id) {
+    Page root_page;
+    Status st = page_manager_.read_page(root_id, root_page);
+    if (!st.ok()) return st;
+
+    auto* header = BPlusTreePage::get_header(root_page);
+
+    // 1. Если корень — лист и он стал пустым
+    if (header->page_type == BTreePageType::LEAF && header->num_keys == 0) {
+        root_page_id_ = INVALID_PAGE_ID;
+        return flush_metadata(); // <-- Сохраняем INVALID_PAGE_ID на диск
+    }
+
+    // 2. Если корень — внутренний узел и у него больше нет ключей (остался 1 ребенок)
+    if (header->page_type == BTreePageType::INTERNAL && header->num_keys == 0) {
+        auto* children = BPlusTreePage::get_internal_values(root_page);
+        root_page_id_ = children[0];
+
+        Page new_root_page;
+        st = page_manager_.read_page(root_page_id_, new_root_page);
+        if (!st.ok()) return st;
+
+        auto* new_root_header = BPlusTreePage::get_header(new_root_page);
+        new_root_header->parent_page_id = INVALID_PAGE_ID;
+        
+        st = page_manager_.write_page(root_page_id_, new_root_page);
+        if (!st.ok()) return st;
+
+        return flush_metadata(); // <-- Сохраняем новый root_page_id_ на диск
+    }
+
+    return Status::OK();
 }

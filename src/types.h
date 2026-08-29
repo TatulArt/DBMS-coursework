@@ -216,9 +216,14 @@ inline std::ostream& operator<<(std::ostream& os, const Value& val) {
 // 4. ФИЗИЧЕСКАЯ ИДЕНТИФИКАЦИЯ ЗАПИСЕЙ И ЗАПИСЬ (RECORD)
 // ============================================================================
 
+using PageId = uint32_t;
+#ifndef INVALID_PAGE_ID
+constexpr PageId INVALID_PAGE_ID = 0xFFFFFFFF;
+#endif
+
 // Уникальный адрес строки внутри СУБД (Номер страницы + Индекс слота)
 struct RecordId {
-    uint32_t page_id{0};
+    PageId page_id{0};
     uint16_t slot_id{0};
 
     bool operator==(const RecordId& other) const {
@@ -235,5 +240,19 @@ struct Record {
     RecordId id;
     std::vector<Value> fields;
 };
+
+// ============================================================================
+// 5. МЕТАДАННЫЕ БАЗЫ ДАННЫХ И СТРАНИЦЫ (DATABASE METADATA)
+// ============================================================================
+
+constexpr PageId METADATA_PAGE_ID = 0;
+constexpr uint32_t DB_MAGIC_NUMBER = 0xBEEFCAFE;
+
+#pragma pack(push, 1)
+struct DatabaseMetadata {
+    uint32_t magic_number;
+    PageId root_page_id;
+};
+#pragma pack(pop)
 
 #endif // TYPES_H

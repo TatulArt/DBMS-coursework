@@ -24,10 +24,6 @@ struct BPlusTreeHeader {
 };
 #pragma pack(pop)
 
-#ifndef INVALID_PAGE_ID
-constexpr PageId INVALID_PAGE_ID = 0xFFFFFFFF;
-#endif
-
 // Класс итератора для обхода листовых страниц B+ Дерева
 class IndexIterator {
 public:
@@ -107,6 +103,12 @@ public:
     // Вставка ключа и указателя на запись (RecordId)
     Status insert(int32_t key, const RecordId& rid);
 
+    // Поиск диапазона ключей [low_key, high_key]
+    Status scan_range(int32_t low_key, int32_t high_key, std::vector<RecordId>& result);
+
+    // Удаление ключа из дерева
+    Status remove(int32_t key);
+
     IndexIterator begin();
 
     // Итератор, обозначающий конец (INVALID_PAGE_ID)
@@ -117,7 +119,10 @@ public:
 
 private:
     PageManager& page_manager_;
-    PageId root_page_id_;
+    PageId root_page_id_{INVALID_PAGE_ID};
+
+    // 2. ДОБАВЬТЕ объявление метода flush_metadata в приватную секцию:
+    Status flush_metadata();
 
     // Вспомогательные приватные методы
     Result<PageId> find_leaf_page(int32_t key);
@@ -125,6 +130,11 @@ private:
     Status insert_into_leaf(PageId leaf_id, int32_t key, const RecordId& rid);
     Status split_leaf(PageId leaf_id);
     Status insert_into_parent(PageId left_child_id, int32_t key, PageId right_child_id);
+
+    // Методы для удаления и перебалансировки
+    Status remove_from_leaf(PageId leaf_id, int32_t key);
+    Status coalesce_or_redistribute(PageId page_id);
+    Status adjust_root(PageId root_id);
 
     Result<PageId> find_first_leaf_page();
 };

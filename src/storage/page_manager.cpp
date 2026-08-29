@@ -1,5 +1,6 @@
 #include "page_manager.h"
 #include <iostream>
+#include <cstring> // Для std::memset
 
 PageManager::PageManager(const std::string& file_path)
     : file_path_(file_path) {}
@@ -8,11 +9,55 @@ PageManager::~PageManager() {
     close();
 }
 
+Status PageManager::create_database(const std::string& db_path) {
+    // 1. Вызываем open() без параметров, так как путь к файлу задан в самом PageManager
+    Status st = open(); 
+    if (!st.ok()) {
+        return st;
+    }
+
+    // 2. Выделяем 0-ю страницу под метаданные
+    Page meta_page;
+    PageId meta_id = METADATA_PAGE_ID;
+
+    st = allocate_page(meta_id, meta_page);
+    if (!st.ok()) {
+        return st;
+    }
+
+    // 3. Заполняем заголовки метаданных
+    std::memset(meta_page.data, 0, PAGE_SIZE);
+
+    auto* meta = reinterpret_cast<DatabaseMetadata*>(meta_page.data);
+    meta->magic_number = DB_MAGIC_NUMBER;
+    meta->root_page_id = INVALID_PAGE_ID;
+
+    // 4. Записываем изменения на диск
+    return write_page(METADATA_PAGE_ID, meta_page);
+}
+
+Status PageManager::update_root_page_id(PageId new_root_id) {
+    Page meta_page;
+    Status st = read_page(METADATA_PAGE_ID, meta_page);
+    if (!st.ok()) {
+        return st;
+    }
+
+    auto* meta = reinterpret_cast<DatabaseMetadata*>(meta_page.data);
+    if (meta->magic_number != DB_MAGIC_NUMBER) {
+        // Передаём первым аргументом нужный StatusCode (StatusCode::CorruptedData)
+        return Status::Error(StatusCode::CorruptedData, "Invalid database magic number"); 
+    }
+
+    meta->root_page_id = new_root_id;
+    return write_page(METADATA_PAGE_ID, meta_page);
+}
+
 Status PageManager::open() {
     // Открываем файл для чтения и записи в бинарном режиме
     file_stream_.open(file_path_, std::ios::in | std::ios::out | std::ios::binary);
 
-    // Если файл не существует, создаём его
+    // Если файл не существует, создаём его (пустым)
     if (!file_stream_.is_open()) {
         file_stream_.clear();
         file_stream_.open(file_path_, std::ios::out | std::ios::binary);
@@ -104,4 +149,18 @@ Status PageManager::allocate_page(PageId& new_page_id, Page& page_out) {
     }
 
     return Status::OK();
+}
+
+Status init_database(PageManager& page_manager) {
+    Page meta_page;
+    PageId id = METADATA_PAGE_ID;
+    Status st = page_manager.allocate_page(id, meta_page);
+    if (!st.ok()) return st;
+
+    std::memset(meta_page.data, 0, PAGE_SIZE);
+    auto* meta = reinterpret_cast<DatabaseMetadata*>(meta_page.data);
+    meta->magic_number = 0xBEEFCAFE;
+    meta->root_page_id = INVALID_PAGE_ID; // Дерево изначально пустое
+
+    return page_manager.write_page(METADATA_PAGE_ID, meta_page);
 }

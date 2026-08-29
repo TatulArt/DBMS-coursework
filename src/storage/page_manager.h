@@ -46,6 +46,15 @@ public:
     // Выделение новой страницы в конце файла
     Status allocate_page(PageId& new_page_id, Page& page_out);
 
+    
+    // Создает новый файл базы данных и инициализирует 0-ю страницу метаданных.
+    // @param db_path Путь к создаваемому файлу базы данных
+    Status create_database(const std::string& db_path);
+
+    // Вспомогательный метод для сброса/обновления root_page_id в метаданных
+    Status update_root_page_id(PageId new_root_id);
+
+
     // Вспомогательные методы
     uint32_t get_num_pages() const { return num_pages_; }
     const std::string& get_file_path() const { return file_path_; }
