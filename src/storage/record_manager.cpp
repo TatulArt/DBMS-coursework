@@ -186,6 +186,14 @@ Result<Record> RecordManager::get_record(RecordId id, const std::vector<ColumnDe
         return Status::Error(StatusCode::RecordNotFound, "Record was deleted");
     }
 
+    // Слот, указывающий за пределы страницы, означает повреждение данных.
+    // Без этой проверки deserialize_record читал бы память за буфером страницы.
+    if (static_cast<size_t>(slot.offset) + slot.length > PAGE_SIZE) {
+        return Status::Error(StatusCode::CorruptedData,
+                             "Slot " + std::to_string(id.slot_id) + " points outside of page " +
+                             std::to_string(id.page_id));
+    }
+
     auto fields_res = deserialize_record(page.data + slot.offset, slot.length, schema);
     if (!fields_res.ok()) return fields_res.status();
 
@@ -216,4 +224,75 @@ Status RecordManager::delete_record(RecordId id) {
     std::memcpy(page.data + slot_offset, &slot, sizeof(Slot));
 
     return page_manager_.write_page(id.page_id, page);
+}
+
+// ============================================================================
+// ПЕРЕЧИСЛЕНИЕ ЗАПИСЕЙ СТРАНИЦЫ (нужно для полного скана и построения индекса)
+// ============================================================================
+Result<std::vector<Record>> RecordManager::scan_page(PageId page_id,
+                                                     const std::vector<ColumnDef>& schema) {
+    Page page;
+    Status st = page_manager_.read_page(page_id, page);
+    if (!st.ok()) return st;
+
+    SlottedPageHeader header;
+    std::memcpy(&header, page.data, sizeof(SlottedPageHeader));
+
+    std::vector<Record> records;
+
+    // Массив слотов не может выходить за пределы страницы
+    const size_t max_slots = (PAGE_SIZE - sizeof(SlottedPageHeader)) / sizeof(Slot);
+    if (header.slot_count > max_slots) {
+        return Status::Error(StatusCode::CorruptedData,
+                             "Page " + std::to_string(page_id) + " reports impossible slot count");
+    }
+
+    for (uint16_t slot_idx = 0; slot_idx < header.slot_count; ++slot_idx) {
+        Slot slot;
+        std::memcpy(&slot, page.data + sizeof(SlottedPageHeader) + slot_idx * sizeof(Slot), sizeof(Slot));
+
+        if (slot.length == 0) {
+            continue; // Запись удалена
+        }
+        if (static_cast<size_t>(slot.offset) + slot.length > PAGE_SIZE) {
+            return Status::Error(StatusCode::CorruptedData,
+                                 "Slot " + std::to_string(slot_idx) + " points outside of page " +
+                                 std::to_string(page_id));
+        }
+
+        auto fields_res = deserialize_record(page.data + slot.offset, slot.length, schema);
+        if (!fields_res.ok()) return fields_res.status();
+
+        records.push_back(Record{RecordId{page_id, slot_idx}, fields_res.value()});
+    }
+
+    return records;
+}
+
+// ============================================================================
+// ПРОВЕРКА СВОБОДНОГО МЕСТА НА СТРАНИЦЕ
+// ============================================================================
+Result<bool> RecordManager::page_has_space(PageId page_id, size_t needed_bytes) {
+    Page page;
+    Status st = page_manager_.read_page(page_id, page);
+    if (!st.ok()) return st;
+
+    SlottedPageHeader header;
+    std::memcpy(&header, page.data, sizeof(SlottedPageHeader));
+    if (header.free_space_offset == 0) {
+        header.free_space_offset = PAGE_SIZE; // Страница ещё не использовалась
+    }
+
+    const size_t slot_array_end = sizeof(SlottedPageHeader) + header.slot_count * sizeof(Slot);
+    if (header.free_space_offset < slot_array_end) {
+        return false;
+    }
+
+    // Помимо самой записи нужен ещё один слот в массиве слотов
+    return (header.free_space_offset - slot_array_end) >= (needed_bytes + sizeof(Slot));
+}
+
+size_t RecordManager::record_size(const std::vector<Value>& fields,
+                                  const std::vector<ColumnDef>& schema) {
+    return Serializer::get_serialized_size(fields, schema);
 }
