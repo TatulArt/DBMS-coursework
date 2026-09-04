@@ -125,3 +125,186 @@ TEST_F(IndexManagerTest, DropIndexSuccess) {
     // Повторный drop должен возвращать ошибку
     ASSERT_FALSE(index_manager_->drop_index(index_name).ok());
 }
+// ============================================================================
+// Тесты персистентности каталога индексов
+// ============================================================================
+
+class IndexCatalogPersistenceTest : public ::testing::Test {
+protected:
+    const std::string db_file = "test_index_catalog.db";
+
+    void SetUp() override { std::remove(db_file.c_str()); }
+    void TearDown() override { std::remove(db_file.c_str()); }
+};
+
+// 7. Каталог индексов переживает перезапуск СУБД
+TEST_F(IndexCatalogPersistenceTest, CatalogSurvivesRestart) {
+    PageId users_root = INVALID_PAGE_ID;
+
+    // ШАГ 1: создаём индексы и наполняем один из них
+    {
+        PageManager pm(db_file);
+        ASSERT_TRUE(pm.open().ok());
+
+        IndexManager im(pm);
+        ASSERT_TRUE(im.open().ok());
+
+        ASSERT_TRUE(im.create_index("idx_users_id", "users", "id").ok());
+        ASSERT_TRUE(im.create_index("idx_orders_id", "orders", "id").ok());
+
+        // Достаточно записей, чтобы корень дерева сменился после сплитов
+        for (int i = 1; i <= 2000; ++i) {
+            ASSERT_TRUE(im.insert_entry("idx_users_id", i, RecordId{static_cast<PageId>(i), 0}).ok());
+        }
+
+        users_root = im.get_index_info("idx_users_id").value().root_page_id;
+        ASSERT_NE(users_root, INVALID_PAGE_ID);
+        pm.close();
+    }
+
+    // ШАГ 2: открываем файл заново — каталог должен подняться с диска
+    {
+        PageManager pm(db_file);
+        ASSERT_TRUE(pm.open().ok());
+
+        IndexManager im(pm);
+        ASSERT_TRUE(im.open().ok());
+
+        ASSERT_EQ(im.size(), 2u);
+        ASSERT_TRUE(im.has_index("idx_users_id"));
+        ASSERT_TRUE(im.has_index("idx_orders_id"));
+
+        auto info = im.get_index_info("idx_users_id");
+        ASSERT_TRUE(info.ok());
+        EXPECT_EQ(info.value().root_page_id, users_root);
+        EXPECT_EQ(info.value().table_name, "users");
+        EXPECT_EQ(info.value().column_name, "id");
+
+        // Данные индекса тоже должны быть на месте
+        for (int i = 1; i <= 2000; ++i) {
+            auto res = im.find_entry("idx_users_id", i);
+            ASSERT_TRUE(res.ok()) << "Ключ " << i << " потерян после перезапуска";
+            EXPECT_EQ(res.value().page_id, static_cast<PageId>(i));
+        }
+        pm.close();
+    }
+}
+
+// 8. Несколько индексов в одном файле не затирают корни друг друга.
+//    Раньше каждое дерево писало свой корень в DatabaseMetadata::root_page_id,
+//    поэтому второй индекс ломал первый.
+TEST_F(IndexCatalogPersistenceTest, MultipleIndexesDoNotOverwriteEachOther) {
+    PageManager pm(db_file);
+    ASSERT_TRUE(pm.open().ok());
+
+    IndexManager im(pm);
+    ASSERT_TRUE(im.open().ok());
+
+    ASSERT_TRUE(im.create_index("idx_a", "t", "a").ok());
+    ASSERT_TRUE(im.create_index("idx_b", "t", "b").ok());
+    ASSERT_TRUE(im.create_index("idx_c", "t", "c").ok());
+
+    // Наполняем все три индекса вперемешку, провоцируя сплиты корней
+    for (int i = 1; i <= 1500; ++i) {
+        ASSERT_TRUE(im.insert_entry("idx_a", i, RecordId{static_cast<PageId>(i), 0}).ok());
+        ASSERT_TRUE(im.insert_entry("idx_b", i * 2, RecordId{static_cast<PageId>(i), 1}).ok());
+        ASSERT_TRUE(im.insert_entry("idx_c", -i, RecordId{static_cast<PageId>(i), 2}).ok());
+    }
+
+    // Корни трёх деревьев обязаны быть различными
+    const PageId root_a = im.get_index_info("idx_a").value().root_page_id;
+    const PageId root_b = im.get_index_info("idx_b").value().root_page_id;
+    const PageId root_c = im.get_index_info("idx_c").value().root_page_id;
+    EXPECT_NE(root_a, root_b);
+    EXPECT_NE(root_b, root_c);
+    EXPECT_NE(root_a, root_c);
+
+    for (int i = 1; i <= 1500; ++i) {
+        EXPECT_TRUE(im.find_entry("idx_a", i).ok()) << "idx_a потерял ключ " << i;
+        EXPECT_TRUE(im.find_entry("idx_b", i * 2).ok()) << "idx_b потерял ключ " << i * 2;
+        EXPECT_TRUE(im.find_entry("idx_c", -i).ok()) << "idx_c потерял ключ " << -i;
+    }
+
+    // Каждое дерево должно быть структурно корректным
+    for (const char* name : {"idx_a", "idx_b", "idx_c"}) {
+        auto tree = im.get_index(name);
+        ASSERT_TRUE(tree.ok());
+        EXPECT_TRUE(tree.value().validate().ok()) << name << ": " << tree.value().validate().message;
+    }
+
+    pm.close();
+}
+
+// 9. Удаление ключей через каталог и поиск индекса по колонке
+TEST_F(IndexCatalogPersistenceTest, RemoveEntriesAndLookupByColumn) {
+    PageManager pm(db_file);
+    ASSERT_TRUE(pm.open().ok());
+
+    IndexManager im(pm);
+    ASSERT_TRUE(im.open().ok());
+    ASSERT_TRUE(im.create_index("idx_users_id", "users", "id").ok());
+
+    for (int i = 1; i <= 1000; ++i) {
+        ASSERT_TRUE(im.insert_entry("idx_users_id", i, RecordId{static_cast<PageId>(i), 0}).ok());
+    }
+
+    // Оптимизатор должен уметь находить индекс по паре (таблица, колонка)
+    auto by_column = im.find_index_for_column("users", "id");
+    ASSERT_TRUE(by_column.ok());
+    EXPECT_EQ(by_column.value().index_name, "idx_users_id");
+    EXPECT_FALSE(im.find_index_for_column("users", "name").ok());
+
+    for (int i = 1; i <= 500; ++i) {
+        ASSERT_TRUE(im.remove_entry("idx_users_id", i).ok()) << "Не удалён ключ " << i;
+    }
+
+    for (int i = 1; i <= 1000; ++i) {
+        EXPECT_EQ(im.find_entry("idx_users_id", i).ok(), i > 500) << "Ключ " << i;
+    }
+
+    std::vector<RecordId> range;
+    ASSERT_TRUE(im.range_scan("idx_users_id", 600, 700, range).ok());
+    EXPECT_EQ(range.size(), 101u);
+
+    std::vector<RecordId> all;
+    ASSERT_TRUE(im.full_scan("idx_users_id", all).ok());
+    EXPECT_EQ(all.size(), 500u);
+
+    pm.close();
+}
+
+// 10. Повторный индекс по той же колонке запрещён, список индексов таблицы
+TEST_F(IndexCatalogPersistenceTest, DuplicateColumnIndexRejectedAndListing) {
+    PageManager pm(db_file);
+    ASSERT_TRUE(pm.open().ok());
+
+    IndexManager im(pm);
+    ASSERT_TRUE(im.open().ok());
+
+    ASSERT_TRUE(im.create_index("idx_users_id", "users", "id").ok());
+
+    // Другое имя, но та же колонка — бессмысленный дубликат
+    auto dup = im.create_index("idx_users_id_2", "users", "id");
+    EXPECT_FALSE(dup.ok());
+
+    ASSERT_TRUE(im.create_index("idx_users_age", "users", "age").ok());
+    ASSERT_TRUE(im.create_index("idx_orders_id", "orders", "id").ok());
+
+    EXPECT_EQ(im.list_indexes().size(), 3u);
+    EXPECT_EQ(im.indexes_for_table("users").size(), 2u);
+    EXPECT_EQ(im.indexes_for_table("orders").size(), 1u);
+    EXPECT_EQ(im.indexes_for_table("unknown").size(), 0u);
+
+    // Индексы по строковым колонкам пока не поддерживаются — ошибка должна быть явной
+    auto str_index = im.create_index("idx_users_name", "users", "name", ColumnType::String);
+    EXPECT_FALSE(str_index.ok());
+    EXPECT_EQ(str_index.status().code, StatusCode::TypeMismatch);
+
+    // Удаление индекса тоже должно сохраняться на диск
+    ASSERT_TRUE(im.drop_index("idx_users_age").ok());
+    ASSERT_TRUE(im.reload().ok());
+    EXPECT_EQ(im.size(), 2u);
+    EXPECT_FALSE(im.has_index("idx_users_age"));
+
+    pm.close();
+}
