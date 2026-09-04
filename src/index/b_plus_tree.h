@@ -6,6 +6,7 @@
 #include <memory>
 #include <optional>
 #include "../types.h"
+#include "./index_key.h"
 #include "../storage/page_manager.h"
 
 // Тип узла B+ дерева
@@ -17,7 +18,7 @@ enum class BTreePageType : uint8_t {
 // ============================================================================
 // Заголовок страницы B+ дерева (первые байты 4KB страницы).
 //
-// Размер заголовка сделан равным 16 байтам намеренно: массивы ключей (int32_t),
+// Размер заголовка сделан равным 16 байтам намеренно: массивы ключей,
 // RecordId и PageId, которые лежат сразу за заголовком, должны быть выровнены
 // по границе 4 байт. При «плотном» заголовке в 13 байт обращение к ним было
 // невыровненным (undefined behavior и падения на платформах со строгим
@@ -40,18 +41,21 @@ static_assert(sizeof(BPlusTreeHeader) == 16, "BPlusTreeHeader должен за�
 // ============================================================================
 // Вспомогательный класс для манипуляции байтами внутри страницы 4KB
 // ============================================================================
-class BPlusTreePage {
+template <typename KeyT>
+class BPlusTreePageT {
 public:
+    using KeyType = KeyT;
+
     static constexpr size_t HEADER_SIZE = sizeof(BPlusTreeHeader);
 
-    // Вместимость рассчитывается из размера страницы, а не задаётся константой:
-    // лист хранит пары [Key(4B) + RecordId(8B)], внутренний узел — N ключей и
-    // N+1 указателей на дочерние страницы [Key(4B) + PageId(4B)].
+    // Вместимость рассчитывается из размера страницы и размера ключа,
+    // а не задаётся константой: лист хранит пары [Key + RecordId(8B)],
+    // внутренний узел — N ключей и N+1 указателей [Key + PageId(4B)].
     static constexpr uint16_t MAX_KEYS_LEAF =
-        static_cast<uint16_t>((PAGE_SIZE - HEADER_SIZE) / (sizeof(int32_t) + sizeof(RecordId)));
+        static_cast<uint16_t>((PAGE_SIZE - HEADER_SIZE) / (sizeof(KeyT) + sizeof(RecordId)));
 
     static constexpr uint16_t MAX_KEYS_INTERNAL =
-        static_cast<uint16_t>((PAGE_SIZE - HEADER_SIZE - sizeof(PageId)) / (sizeof(int32_t) + sizeof(PageId)));
+        static_cast<uint16_t>((PAGE_SIZE - HEADER_SIZE - sizeof(PageId)) / (sizeof(KeyT) + sizeof(PageId)));
 
     // Минимальная заполненность узла (для корня не действует)
     static constexpr uint16_t MIN_KEYS_LEAF = MAX_KEYS_LEAF / 2;
@@ -64,8 +68,8 @@ public:
     static const BPlusTreeHeader* get_header(const Page& page);
 
     // Доступ к массивам данных внутри страницы (смещение относительно заголовка)
-    static int32_t* get_keys(Page& page);
-    static const int32_t* get_keys(const Page& page);
+    static KeyT* get_keys(Page& page);
+    static const KeyT* get_keys(const Page& page);
 
     static RecordId* get_leaf_values(Page& page);         // Только для LEAF
     static const RecordId* get_leaf_values(const Page& page);
@@ -74,34 +78,50 @@ public:
     static const PageId* get_internal_values(const Page& page);
 
     // Бинарный поиск первого ключа >= target
-    static int find_key_index(const Page& page, int32_t key);
+    static int find_key_index(const Page& page, const KeyT& key);
 
     // Минимальная заполненность для узла заданного типа
     static uint16_t min_keys_for(BTreePageType type);
+
+    // Ключи лежат в странице подряд, сразу за ними — массив RecordId/PageId.
+    // Чтобы этот массив оставался выровненным, размер ключа должен быть
+    // кратен 4 байтам.
+    static_assert(sizeof(KeyT) % 4 == 0, "Размер ключа должен быть кратен 4 байтам");
+    static_assert(HEADER_SIZE % 4 == 0, "Заголовок страницы должен быть кратен 4 байтам");
+
+    // Раскладка обязана помещаться в страницу
+    static_assert(HEADER_SIZE + sizeof(KeyT) * MAX_KEYS_LEAF
+                      + sizeof(RecordId) * MAX_KEYS_LEAF <= PAGE_SIZE,
+                  "Листовая страница не помещается в PAGE_SIZE");
+    static_assert(HEADER_SIZE + sizeof(KeyT) * MAX_KEYS_INTERNAL
+                      + sizeof(PageId) * (MAX_KEYS_INTERNAL + 1) <= PAGE_SIZE,
+                  "Внутренняя страница не помещается в PAGE_SIZE");
+
+    // Слияние двух недозаполненных узлов должно помещаться в один узел.
+    // Лист: (MIN-1) + MIN ключей. Внутренний узел: (MIN-1) + MIN плюс
+    // опущенный из родителя ключ-разделитель, итого 2*MIN.
+    static_assert(2 * MIN_KEYS_LEAF - 1 <= MAX_KEYS_LEAF,
+                  "Слияние листьев не помещается в страницу");
+    static_assert(2 * MIN_KEYS_INTERNAL <= MAX_KEYS_INTERNAL,
+                  "Слияние внутренних узлов не помещается в страницу");
+
+    // Узел должен вмещать хотя бы что-то осмысленное
+    static_assert(MIN_KEYS_LEAF >= 1 && MIN_KEYS_INTERNAL >= 1,
+                  "Ключ слишком велик: узел вмещает менее двух ключей");
 };
-
-// Проверяем, что раскладка гарантированно помещается в страницу
-static_assert(BPlusTreePage::HEADER_SIZE
-                  + sizeof(int32_t) * BPlusTreePage::MAX_KEYS_LEAF
-                  + sizeof(RecordId) * BPlusTreePage::MAX_KEYS_LEAF <= PAGE_SIZE,
-              "Листовая страница не помещается в PAGE_SIZE");
-
-static_assert(BPlusTreePage::HEADER_SIZE
-                  + sizeof(int32_t) * BPlusTreePage::MAX_KEYS_INTERNAL
-                  + sizeof(PageId) * (BPlusTreePage::MAX_KEYS_INTERNAL + 1) <= PAGE_SIZE,
-              "Внутренняя страница не помещается в PAGE_SIZE");
 
 // ============================================================================
 // Итератор для последовательного обхода листовых страниц B+ Дерева
 // ============================================================================
-class IndexIterator {
+template <typename KeyT>
+class IndexIteratorT {
 public:
-    IndexIterator(PageManager& page_manager, PageId current_page_id, uint16_t current_slot)
+    IndexIteratorT(PageManager& page_manager, PageId current_page_id, uint16_t current_slot)
         : page_manager_(&page_manager), current_page_id_(current_page_id), current_slot_(current_slot) {
         normalize();
     }
 
-    ~IndexIterator() = default;
+    ~IndexIteratorT() = default;
 
     // Проверка достижения конца итерации
     bool is_end() const {
@@ -109,21 +129,21 @@ public:
     }
 
     // Получение текущей пары (Key, RecordId)
-    std::pair<int32_t, RecordId> operator*();
+    std::pair<KeyT, RecordId> operator*();
 
     // Отдельные аксессоры (удобнее, чем распаковка пары)
-    int32_t key();
+    KeyT key();
     RecordId value();
 
     // Переход к следующему элементу
-    IndexIterator& operator++();
+    IndexIteratorT& operator++();
 
     // Операторы сравнения итераторов
-    bool operator==(const IndexIterator& other) const {
+    bool operator==(const IndexIteratorT& other) const {
         return current_page_id_ == other.current_page_id_ && current_slot_ == other.current_slot_;
     }
 
-    bool operator!=(const IndexIterator& other) const {
+    bool operator!=(const IndexIteratorT& other) const {
         return !(*this == other);
     }
 
@@ -146,14 +166,15 @@ private:
 // ============================================================================
 // Главный класс B+ Дерева
 // ============================================================================
-class BPlusTree {
+template <typename KeyT>
+class BPlusTreeT {
 public:
     // Callback, который вызывается при смене корня дерева.
     // Позволяет владельцу дерева (например IndexManager) сохранить новый
     // root_page_id в своём каталоге вместо записи в 0-ю страницу метаданных БД.
     using RootChangedCallback = std::function<Status(PageId)>;
 
-    explicit BPlusTree(PageManager& page_manager, PageId root_page_id = INVALID_PAGE_ID);
+    explicit BPlusTreeT(PageManager& page_manager, PageId root_page_id = INVALID_PAGE_ID);
 
     PageId get_root_page_id() const { return root_page_id_; }
     bool empty() const { return root_page_id_ == INVALID_PAGE_ID; }
@@ -162,31 +183,31 @@ public:
     void set_root_listener(RootChangedCallback callback) { root_listener_ = std::move(callback); }
 
     // Поиск записи по ключу
-    Result<RecordId> search(int32_t key);
+    Result<RecordId> search(const KeyT& key);
 
     // Вставка ключа и указателя на запись (RecordId).
     // Ключи уникальны: повторная вставка вернёт UniqueConstraintViolation.
-    Status insert(int32_t key, const RecordId& rid);
+    Status insert(const KeyT& key, const RecordId& rid);
 
     // Обновление RecordId у существующего ключа (запись переехала на другую страницу)
-    Status update(int32_t key, const RecordId& rid);
+    Status update(const KeyT& key, const RecordId& rid);
 
     // Поиск диапазона ключей [low_key, high_key] (обе границы включительно)
-    Status scan_range(int32_t low_key, int32_t high_key, std::vector<RecordId>& result);
+    Status scan_range(const KeyT& low_key, const KeyT& high_key, std::vector<RecordId>& result);
 
     // Поиск диапазона [low_key, high_key) — семантика BETWEEN из задания
-    Status scan_range_half_open(int32_t low_key, int32_t high_key, std::vector<RecordId>& result);
+    Status scan_range_half_open(const KeyT& low_key, const KeyT& high_key, std::vector<RecordId>& result);
 
     // Удаление ключа из дерева
-    Status remove(int32_t key);
+    Status remove(const KeyT& key);
 
-    IndexIterator begin();
+    IndexIteratorT<KeyT> begin();
 
     // Итератор, обозначающий конец (INVALID_PAGE_ID)
-    IndexIterator end();
+    IndexIteratorT<KeyT> end();
 
     // Поиск итератора на первый элемент, который >= low_key
-    IndexIterator lower_bound(int32_t low_key);
+    IndexIteratorT<KeyT> lower_bound(const KeyT& low_key);
 
     // Проверка структурной целостности дерева (используется в тестах)
     Status validate();
@@ -201,14 +222,14 @@ private:
     Status flush_metadata();
 
     // Вспомогательные приватные методы
-    Result<PageId> find_leaf_page(int32_t key);
+    Result<PageId> find_leaf_page(const KeyT& key);
     Result<PageId> find_first_leaf_page();
 
-    Status insert_into_leaf(PageId leaf_id, int32_t key, const RecordId& rid);
-    Status insert_into_parent(PageId left_child_id, int32_t key, PageId right_child_id);
+    Status insert_into_leaf(PageId leaf_id, const KeyT& key, const RecordId& rid);
+    Status insert_into_parent(PageId left_child_id, const KeyT& key, PageId right_child_id);
 
     // Методы для удаления и перебалансировки
-    Status remove_from_leaf(PageId leaf_id, int32_t key);
+    Status remove_from_leaf(PageId leaf_id, const KeyT& key);
     Status coalesce_or_redistribute(PageId page_id);
     Status adjust_root(PageId root_id);
 
@@ -228,5 +249,25 @@ private:
     Status set_parent(PageId child_id, PageId parent_id);
 
     Status validate_subtree(PageId page_id, PageId expected_parent,
-                            int32_t* prev_key, bool* has_prev, int depth, int* leaf_depth);
+                            KeyT* prev_key, bool* has_prev, int depth, int* leaf_depth);
 };
+
+// ============================================================================
+// Конкретные инстанцирования: индекс по INT-колонке и по STRING-колонке.
+// Имена без суффикса сохранены ради совместимости с остальным кодом.
+// ============================================================================
+using BPlusTreePage  = BPlusTreePageT<int32_t>;
+using IndexIterator  = IndexIteratorT<int32_t>;
+using BPlusTree      = BPlusTreeT<int32_t>;
+
+using StringBPlusTreePage = BPlusTreePageT<StringKey>;
+using StringIndexIterator = IndexIteratorT<StringKey>;
+using StringBPlusTree     = BPlusTreeT<StringKey>;
+
+extern template class BPlusTreePageT<int32_t>;
+extern template class IndexIteratorT<int32_t>;
+extern template class BPlusTreeT<int32_t>;
+
+extern template class BPlusTreePageT<StringKey>;
+extern template class IndexIteratorT<StringKey>;
+extern template class BPlusTreeT<StringKey>;

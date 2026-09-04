@@ -12,7 +12,8 @@ constexpr int MAX_TREE_DEPTH = 64;
 // Реализация вспомогательного класса BPlusTreePage
 // ============================================================================
 
-void BPlusTreePage::init_leaf_page(Page& page, PageId parent_id) {
+template <typename KeyT>
+void BPlusTreePageT<KeyT>::init_leaf_page(Page& page, PageId parent_id) {
     std::memset(page.data, 0, PAGE_SIZE);
     auto* header = get_header(page);
     header->page_type = BTreePageType::LEAF;
@@ -24,7 +25,8 @@ void BPlusTreePage::init_leaf_page(Page& page, PageId parent_id) {
     header->next_page_id = INVALID_PAGE_ID;
 }
 
-void BPlusTreePage::init_internal_page(Page& page, PageId parent_id) {
+template <typename KeyT>
+void BPlusTreePageT<KeyT>::init_internal_page(Page& page, PageId parent_id) {
     std::memset(page.data, 0, PAGE_SIZE);
     auto* header = get_header(page);
     header->page_type = BTreePageType::INTERNAL;
@@ -36,51 +38,61 @@ void BPlusTreePage::init_internal_page(Page& page, PageId parent_id) {
     header->next_page_id = INVALID_PAGE_ID;
 }
 
-BPlusTreeHeader* BPlusTreePage::get_header(Page& page) {
+template <typename KeyT>
+BPlusTreeHeader* BPlusTreePageT<KeyT>::get_header(Page& page) {
     return reinterpret_cast<BPlusTreeHeader*>(page.data);
 }
 
-const BPlusTreeHeader* BPlusTreePage::get_header(const Page& page) {
+template <typename KeyT>
+const BPlusTreeHeader* BPlusTreePageT<KeyT>::get_header(const Page& page) {
     return reinterpret_cast<const BPlusTreeHeader*>(page.data);
 }
 
-int32_t* BPlusTreePage::get_keys(Page& page) {
-    return reinterpret_cast<int32_t*>(page.data + HEADER_SIZE);
+template <typename KeyT>
+KeyT* BPlusTreePageT<KeyT>::get_keys(Page& page) {
+    return reinterpret_cast<KeyT*>(page.data + HEADER_SIZE);
 }
 
-const int32_t* BPlusTreePage::get_keys(const Page& page) {
-    return reinterpret_cast<const int32_t*>(page.data + HEADER_SIZE);
+template <typename KeyT>
+const KeyT* BPlusTreePageT<KeyT>::get_keys(const Page& page) {
+    return reinterpret_cast<const KeyT*>(page.data + HEADER_SIZE);
 }
 
-RecordId* BPlusTreePage::get_leaf_values(Page& page) {
+template <typename KeyT>
+RecordId* BPlusTreePageT<KeyT>::get_leaf_values(Page& page) {
     return reinterpret_cast<RecordId*>(
-        page.data + HEADER_SIZE + sizeof(int32_t) * MAX_KEYS_LEAF
+        page.data + HEADER_SIZE + sizeof(KeyT) * MAX_KEYS_LEAF
     );
 }
 
-const RecordId* BPlusTreePage::get_leaf_values(const Page& page) {
+template <typename KeyT>
+const RecordId* BPlusTreePageT<KeyT>::get_leaf_values(const Page& page) {
     return reinterpret_cast<const RecordId*>(
-        page.data + HEADER_SIZE + sizeof(int32_t) * MAX_KEYS_LEAF
+        page.data + HEADER_SIZE + sizeof(KeyT) * MAX_KEYS_LEAF
     );
 }
 
-PageId* BPlusTreePage::get_internal_values(Page& page) {
+template <typename KeyT>
+PageId* BPlusTreePageT<KeyT>::get_internal_values(Page& page) {
     return reinterpret_cast<PageId*>(
-        page.data + HEADER_SIZE + sizeof(int32_t) * MAX_KEYS_INTERNAL
+        page.data + HEADER_SIZE + sizeof(KeyT) * MAX_KEYS_INTERNAL
     );
 }
 
-const PageId* BPlusTreePage::get_internal_values(const Page& page) {
+template <typename KeyT>
+const PageId* BPlusTreePageT<KeyT>::get_internal_values(const Page& page) {
     return reinterpret_cast<const PageId*>(
-        page.data + HEADER_SIZE + sizeof(int32_t) * MAX_KEYS_INTERNAL
+        page.data + HEADER_SIZE + sizeof(KeyT) * MAX_KEYS_INTERNAL
     );
 }
 
-uint16_t BPlusTreePage::min_keys_for(BTreePageType type) {
+template <typename KeyT>
+uint16_t BPlusTreePageT<KeyT>::min_keys_for(BTreePageType type) {
     return (type == BTreePageType::LEAF) ? MIN_KEYS_LEAF : MIN_KEYS_INTERNAL;
 }
 
-int BPlusTreePage::find_key_index(const Page& page, int32_t key) {
+template <typename KeyT>
+int BPlusTreePageT<KeyT>::find_key_index(const Page& page, const KeyT& key) {
     const auto* header = get_header(page);
     const auto* keys = get_keys(page);
 
@@ -103,7 +115,8 @@ int BPlusTreePage::find_key_index(const Page& page, int32_t key) {
 // Реализация IndexIterator
 // ============================================================================
 
-void IndexIterator::load_current_page() {
+template <typename KeyT>
+void IndexIteratorT<KeyT>::load_current_page() {
     if (current_page_id_ == INVALID_PAGE_ID || page_manager_ == nullptr) {
         page_loaded_ = false;
         return;
@@ -112,7 +125,8 @@ void IndexIterator::load_current_page() {
     page_loaded_ = st.ok();
 }
 
-void IndexIterator::normalize() {
+template <typename KeyT>
+void IndexIteratorT<KeyT>::normalize() {
     // Пропускаем пустые листовые страницы и переходим на следующую,
     // если текущий слот вышел за границу заполненности.
     while (current_page_id_ != INVALID_PAGE_ID) {
@@ -121,7 +135,7 @@ void IndexIterator::normalize() {
             break;
         }
 
-        const auto* header = BPlusTreePage::get_header(current_page_);
+        const auto* header = BPlusTreePageT<KeyT>::get_header(current_page_);
         if (header->page_type != BTreePageType::LEAF) {
             break; // Итератор должен ходить только по листьям
         }
@@ -138,30 +152,34 @@ void IndexIterator::normalize() {
     page_loaded_ = false;
 }
 
-std::pair<int32_t, RecordId> IndexIterator::operator*() {
+template <typename KeyT>
+std::pair<KeyT, RecordId> IndexIteratorT<KeyT>::operator*() {
     if (is_end()) {
-        return {0, RecordId{INVALID_PAGE_ID, 0}};
+        return {KeyT{}, RecordId{INVALID_PAGE_ID, 0}};
     }
     if (!page_loaded_) {
         load_current_page();
         if (!page_loaded_) {
-            return {0, RecordId{INVALID_PAGE_ID, 0}};
+            return {KeyT{}, RecordId{INVALID_PAGE_ID, 0}};
         }
     }
-    const auto* keys = BPlusTreePage::get_keys(current_page_);
-    const auto* values = BPlusTreePage::get_leaf_values(current_page_);
+    const auto* keys = BPlusTreePageT<KeyT>::get_keys(current_page_);
+    const auto* values = BPlusTreePageT<KeyT>::get_leaf_values(current_page_);
     return {keys[current_slot_], values[current_slot_]};
 }
 
-int32_t IndexIterator::key() {
+template <typename KeyT>
+KeyT IndexIteratorT<KeyT>::key() {
     return (**this).first;
 }
 
-RecordId IndexIterator::value() {
+template <typename KeyT>
+RecordId IndexIteratorT<KeyT>::value() {
     return (**this).second;
 }
 
-IndexIterator& IndexIterator::operator++() {
+template <typename KeyT>
+IndexIteratorT<KeyT>& IndexIteratorT<KeyT>::operator++() {
     if (is_end()) {
         return *this;
     }
@@ -175,7 +193,8 @@ IndexIterator& IndexIterator::operator++() {
 // Реализация BPlusTree
 // ============================================================================
 
-BPlusTree::BPlusTree(PageManager& page_manager, PageId root_page_id)
+template <typename KeyT>
+BPlusTreeT<KeyT>::BPlusTreeT(PageManager& page_manager, PageId root_page_id)
     : page_manager_(page_manager), root_page_id_(root_page_id) {
 
     // Если корень не задан явно, пробуем загрузить его из метаданных (0-я страница)
@@ -190,7 +209,8 @@ BPlusTree::BPlusTree(PageManager& page_manager, PageId root_page_id)
     }
 }
 
-Status BPlusTree::notify_root_changed() {
+template <typename KeyT>
+Status BPlusTreeT<KeyT>::notify_root_changed() {
     // Если у дерева есть владелец (IndexManager), корень сохраняет он.
     // Иначе — используем 0-ю страницу метаданных БД.
     if (root_listener_) {
@@ -199,7 +219,8 @@ Status BPlusTree::notify_root_changed() {
     return flush_metadata();
 }
 
-Status BPlusTree::flush_metadata() {
+template <typename KeyT>
+Status BPlusTreeT<KeyT>::flush_metadata() {
     Page meta_page;
     Status st = page_manager_.read_page(METADATA_PAGE_ID, meta_page);
     if (!st.ok()) {
@@ -217,12 +238,13 @@ Status BPlusTree::flush_metadata() {
     return Status::OK();
 }
 
-Status BPlusTree::set_parent(PageId child_id, PageId parent_id) {
+template <typename KeyT>
+Status BPlusTreeT<KeyT>::set_parent(PageId child_id, PageId parent_id) {
     Page child_page;
     Status st = page_manager_.read_page(child_id, child_page);
     if (!st.ok()) return st;
 
-    auto* header = BPlusTreePage::get_header(child_page);
+    auto* header = BPlusTreePageT<KeyT>::get_header(child_page);
     if (header->parent_page_id == parent_id) {
         return Status::OK(); // Лишняя запись на диск не нужна
     }
@@ -230,7 +252,8 @@ Status BPlusTree::set_parent(PageId child_id, PageId parent_id) {
     return page_manager_.write_page(child_id, child_page);
 }
 
-Result<PageId> BPlusTree::find_first_leaf_page() {
+template <typename KeyT>
+Result<PageId> BPlusTreeT<KeyT>::find_first_leaf_page() {
     if (root_page_id_ == INVALID_PAGE_ID) {
         return Result<PageId>(Status::Error(StatusCode::RecordNotFound, "Tree is empty"));
     }
@@ -241,7 +264,7 @@ Result<PageId> BPlusTree::find_first_leaf_page() {
         Status st = page_manager_.read_page(current_id, page);
         if (!st.ok()) return Result<PageId>(st);
 
-        const auto* header = BPlusTreePage::get_header(page);
+        const auto* header = BPlusTreePageT<KeyT>::get_header(page);
         if (header->page_type == BTreePageType::LEAF) {
             return Result<PageId>(current_id);
         }
@@ -250,13 +273,14 @@ Result<PageId> BPlusTree::find_first_leaf_page() {
                                                 "Internal node without children"));
         }
 
-        const auto* children = BPlusTreePage::get_internal_values(page);
+        const auto* children = BPlusTreePageT<KeyT>::get_internal_values(page);
         current_id = children[0];
     }
     return Result<PageId>(Status::Error(StatusCode::CorruptedData, "Tree traversal depth exceeded"));
 }
 
-Result<PageId> BPlusTree::find_leaf_page(int32_t key) {
+template <typename KeyT>
+Result<PageId> BPlusTreeT<KeyT>::find_leaf_page(const KeyT& key) {
     if (root_page_id_ == INVALID_PAGE_ID) {
         return Result<PageId>(Status::Error(StatusCode::RecordNotFound, "Tree is empty"));
     }
@@ -267,13 +291,13 @@ Result<PageId> BPlusTree::find_leaf_page(int32_t key) {
         Status st = page_manager_.read_page(current_id, page);
         if (!st.ok()) return Result<PageId>(st);
 
-        const auto* header = BPlusTreePage::get_header(page);
+        const auto* header = BPlusTreePageT<KeyT>::get_header(page);
         if (header->page_type == BTreePageType::LEAF) {
             return Result<PageId>(current_id);
         }
 
-        const auto* keys = BPlusTreePage::get_keys(page);
-        const auto* children = BPlusTreePage::get_internal_values(page);
+        const auto* keys = BPlusTreePageT<KeyT>::get_keys(page);
+        const auto* children = BPlusTreePageT<KeyT>::get_internal_values(page);
 
         // Бинарный поиск вместо линейного: первый ключ > key задаёт нужного потомка
         int low = 0, high = static_cast<int>(header->num_keys) - 1;
@@ -292,19 +316,22 @@ Result<PageId> BPlusTree::find_leaf_page(int32_t key) {
     return Result<PageId>(Status::Error(StatusCode::CorruptedData, "Tree traversal depth exceeded"));
 }
 
-IndexIterator BPlusTree::begin() {
+template <typename KeyT>
+IndexIteratorT<KeyT> BPlusTreeT<KeyT>::begin() {
     auto res = find_first_leaf_page();
     if (!res.ok()) {
         return end();
     }
-    return IndexIterator(page_manager_, res.value(), 0);
+    return IndexIteratorT<KeyT>(page_manager_, res.value(), 0);
 }
 
-IndexIterator BPlusTree::end() {
-    return IndexIterator(page_manager_, INVALID_PAGE_ID, 0);
+template <typename KeyT>
+IndexIteratorT<KeyT> BPlusTreeT<KeyT>::end() {
+    return IndexIteratorT<KeyT>(page_manager_, INVALID_PAGE_ID, 0);
 }
 
-IndexIterator BPlusTree::lower_bound(int32_t low_key) {
+template <typename KeyT>
+IndexIteratorT<KeyT> BPlusTreeT<KeyT>::lower_bound(const KeyT& low_key) {
     auto res = find_leaf_page(low_key);
     if (!res.ok()) {
         return end();
@@ -316,18 +343,19 @@ IndexIterator BPlusTree::lower_bound(int32_t low_key) {
         return end();
     }
 
-    int slot = BPlusTreePage::find_key_index(leaf_page, low_key);
+    int slot = BPlusTreePageT<KeyT>::find_key_index(leaf_page, low_key);
 
     // Конструктор итератора сам перейдёт на следующую страницу,
     // если slot вышел за пределы текущего листа.
-    return IndexIterator(page_manager_, leaf_id, static_cast<uint16_t>(slot));
+    return IndexIteratorT<KeyT>(page_manager_, leaf_id, static_cast<uint16_t>(slot));
 }
 
 // ----------------------------------------------------------------------------
 // Вставка
 // ----------------------------------------------------------------------------
 
-Status BPlusTree::insert(int32_t key, const RecordId& rid) {
+template <typename KeyT>
+Status BPlusTreeT<KeyT>::insert(const KeyT& key, const RecordId& rid) {
     if (root_page_id_ == INVALID_PAGE_ID) {
         Page root_page;
         PageId new_root_id = INVALID_PAGE_ID;
@@ -335,11 +363,11 @@ Status BPlusTree::insert(int32_t key, const RecordId& rid) {
         Status st = page_manager_.allocate_page(new_root_id, root_page);
         if (!st.ok()) return st;
 
-        BPlusTreePage::init_leaf_page(root_page, INVALID_PAGE_ID);
+        BPlusTreePageT<KeyT>::init_leaf_page(root_page, INVALID_PAGE_ID);
 
-        auto* keys = BPlusTreePage::get_keys(root_page);
-        auto* values = BPlusTreePage::get_leaf_values(root_page);
-        auto* header = BPlusTreePage::get_header(root_page);
+        auto* keys = BPlusTreePageT<KeyT>::get_keys(root_page);
+        auto* values = BPlusTreePageT<KeyT>::get_leaf_values(root_page);
+        auto* header = BPlusTreePageT<KeyT>::get_header(root_page);
 
         keys[0] = key;
         values[0] = rid;
@@ -358,26 +386,27 @@ Status BPlusTree::insert(int32_t key, const RecordId& rid) {
     return insert_into_leaf(leaf_res.value(), key, rid);
 }
 
-Status BPlusTree::insert_into_leaf(PageId leaf_id, int32_t key, const RecordId& rid) {
+template <typename KeyT>
+Status BPlusTreeT<KeyT>::insert_into_leaf(PageId leaf_id, const KeyT& key, const RecordId& rid) {
     Page leaf_page;
     Status st = page_manager_.read_page(leaf_id, leaf_page);
     if (!st.ok()) return st;
 
-    auto* header = BPlusTreePage::get_header(leaf_page);
-    auto* keys = BPlusTreePage::get_keys(leaf_page);
-    auto* values = BPlusTreePage::get_leaf_values(leaf_page);
+    auto* header = BPlusTreePageT<KeyT>::get_header(leaf_page);
+    auto* keys = BPlusTreePageT<KeyT>::get_keys(leaf_page);
+    auto* values = BPlusTreePageT<KeyT>::get_leaf_values(leaf_page);
 
-    const uint32_t insert_idx = static_cast<uint32_t>(BPlusTreePage::find_key_index(leaf_page, key));
+    const uint32_t insert_idx = static_cast<uint32_t>(BPlusTreePageT<KeyT>::find_key_index(leaf_page, key));
 
     // Индексируемые поля уникальны (модификатор INDEXED в задании),
     // поэтому дубликат ключа — ошибка ограничения целостности.
     if (insert_idx < header->num_keys && keys[insert_idx] == key) {
         return Status::Error(StatusCode::UniqueConstraintViolation,
-                             "Duplicate key in unique index: " + std::to_string(key));
+                             "Duplicate key in unique index: " + key_to_string(key));
     }
 
     // Если место есть — просто вставляем
-    if (header->num_keys < BPlusTreePage::MAX_KEYS_LEAF) {
+    if (header->num_keys < BPlusTreePageT<KeyT>::MAX_KEYS_LEAF) {
         for (uint32_t i = header->num_keys; i > insert_idx; --i) {
             keys[i] = keys[i - 1];
             values[i] = values[i - 1];
@@ -391,8 +420,8 @@ Status BPlusTree::insert_into_leaf(PageId leaf_id, int32_t key, const RecordId& 
 
     // Лист переполнен -> Сплит.
     // Собираем N+1 элементов во временный буфер, затем делим пополам.
-    const uint32_t total_keys = BPlusTreePage::MAX_KEYS_LEAF + 1;
-    std::vector<int32_t> temp_keys(total_keys);
+    const uint32_t total_keys = BPlusTreePageT<KeyT>::MAX_KEYS_LEAF + 1;
+    std::vector<KeyT> temp_keys(total_keys);
     std::vector<RecordId> temp_values(total_keys);
 
     for (uint32_t i = 0; i < insert_idx; ++i) {
@@ -413,11 +442,11 @@ Status BPlusTree::insert_into_leaf(PageId leaf_id, int32_t key, const RecordId& 
 
     // ВНИМАНИЕ: allocate_page могла расширить файл, но leaf_page у нас уже в
     // памяти — указатели header/keys/values остаются валидными.
-    BPlusTreePage::init_leaf_page(new_leaf_page, header->parent_page_id);
+    BPlusTreePageT<KeyT>::init_leaf_page(new_leaf_page, header->parent_page_id);
 
-    auto* new_header = BPlusTreePage::get_header(new_leaf_page);
-    auto* new_keys = BPlusTreePage::get_keys(new_leaf_page);
-    auto* new_values = BPlusTreePage::get_leaf_values(new_leaf_page);
+    auto* new_header = BPlusTreePageT<KeyT>::get_header(new_leaf_page);
+    auto* new_keys = BPlusTreePageT<KeyT>::get_keys(new_leaf_page);
+    auto* new_values = BPlusTreePageT<KeyT>::get_leaf_values(new_leaf_page);
 
     const uint32_t left_count = total_keys / 2;
     const uint32_t right_count = total_keys - left_count;
@@ -445,16 +474,17 @@ Status BPlusTree::insert_into_leaf(PageId leaf_id, int32_t key, const RecordId& 
     if (!st.ok()) return st;
 
     // Первый ключ правого листа поднимается в родителя как разделитель
-    const int32_t split_key = new_keys[0];
+    const KeyT split_key = new_keys[0];
     return insert_into_parent(leaf_id, split_key, new_leaf_id);
 }
 
-Status BPlusTree::insert_into_parent(PageId left_id, int32_t key, PageId right_id) {
+template <typename KeyT>
+Status BPlusTreeT<KeyT>::insert_into_parent(PageId left_id, const KeyT& key, PageId right_id) {
     Page left_page;
     Status st = page_manager_.read_page(left_id, left_page);
     if (!st.ok()) return st;
 
-    auto* left_header = BPlusTreePage::get_header(left_page);
+    auto* left_header = BPlusTreePageT<KeyT>::get_header(left_page);
     const PageId parent_id = left_header->parent_page_id;
 
     // 1. Родителя нет — создаём новый корень
@@ -464,11 +494,11 @@ Status BPlusTree::insert_into_parent(PageId left_id, int32_t key, PageId right_i
         st = page_manager_.allocate_page(new_root_id, root_page);
         if (!st.ok()) return st;
 
-        BPlusTreePage::init_internal_page(root_page, INVALID_PAGE_ID);
+        BPlusTreePageT<KeyT>::init_internal_page(root_page, INVALID_PAGE_ID);
 
-        auto* root_header = BPlusTreePage::get_header(root_page);
-        auto* root_keys = BPlusTreePage::get_keys(root_page);
-        auto* root_children = BPlusTreePage::get_internal_values(root_page);
+        auto* root_header = BPlusTreePageT<KeyT>::get_header(root_page);
+        auto* root_keys = BPlusTreePageT<KeyT>::get_keys(root_page);
+        auto* root_children = BPlusTreePageT<KeyT>::get_internal_values(root_page);
 
         root_header->num_keys = 1;
         root_keys[0] = key;
@@ -495,9 +525,9 @@ Status BPlusTree::insert_into_parent(PageId left_id, int32_t key, PageId right_i
     st = page_manager_.read_page(parent_id, parent_page);
     if (!st.ok()) return st;
 
-    auto* parent_header = BPlusTreePage::get_header(parent_page);
-    auto* parent_keys = BPlusTreePage::get_keys(parent_page);
-    auto* parent_children = BPlusTreePage::get_internal_values(parent_page);
+    auto* parent_header = BPlusTreePageT<KeyT>::get_header(parent_page);
+    auto* parent_keys = BPlusTreePageT<KeyT>::get_keys(parent_page);
+    auto* parent_children = BPlusTreePageT<KeyT>::get_internal_values(parent_page);
 
     // Ищем позицию left_id среди детей. Детей на один больше, чем ключей,
     // поэтому граница цикла — num_keys включительно.
@@ -511,7 +541,7 @@ Status BPlusTree::insert_into_parent(PageId left_id, int32_t key, PageId right_i
     }
 
     // Если место есть — вставляем новый ключ и указатель
-    if (parent_header->num_keys < BPlusTreePage::MAX_KEYS_INTERNAL) {
+    if (parent_header->num_keys < BPlusTreePageT<KeyT>::MAX_KEYS_INTERNAL) {
         for (uint32_t i = parent_header->num_keys; i > insert_idx; --i) {
             parent_keys[i] = parent_keys[i - 1];
             parent_children[i + 1] = parent_children[i];
@@ -527,8 +557,8 @@ Status BPlusTree::insert_into_parent(PageId left_id, int32_t key, PageId right_i
     }
 
     // 3. Сплит внутреннего узла (родитель переполнен)
-    const uint32_t total_keys = BPlusTreePage::MAX_KEYS_INTERNAL + 1;
-    std::vector<int32_t> temp_keys(total_keys);
+    const uint32_t total_keys = BPlusTreePageT<KeyT>::MAX_KEYS_INTERNAL + 1;
+    std::vector<KeyT> temp_keys(total_keys);
     std::vector<PageId> temp_children(total_keys + 1);
 
     for (uint32_t i = 0; i <= insert_idx; ++i) {
@@ -552,15 +582,15 @@ Status BPlusTree::insert_into_parent(PageId left_id, int32_t key, PageId right_i
     st = page_manager_.allocate_page(new_internal_id, new_internal_page);
     if (!st.ok()) return st;
 
-    BPlusTreePage::init_internal_page(new_internal_page, parent_header->parent_page_id);
+    BPlusTreePageT<KeyT>::init_internal_page(new_internal_page, parent_header->parent_page_id);
 
-    auto* new_header = BPlusTreePage::get_header(new_internal_page);
-    auto* new_keys = BPlusTreePage::get_keys(new_internal_page);
-    auto* new_children = BPlusTreePage::get_internal_values(new_internal_page);
+    auto* new_header = BPlusTreePageT<KeyT>::get_header(new_internal_page);
+    auto* new_keys = BPlusTreePageT<KeyT>::get_keys(new_internal_page);
+    auto* new_children = BPlusTreePageT<KeyT>::get_internal_values(new_internal_page);
 
     // Средний ключ уходит наверх и НЕ остаётся ни в одном из узлов
     const uint32_t split_idx = total_keys / 2;
-    const int32_t up_key = temp_keys[split_idx];
+    const KeyT up_key = temp_keys[split_idx];
 
     parent_header->num_keys = static_cast<uint16_t>(split_idx);
     for (uint32_t i = 0; i < split_idx; ++i) {
@@ -596,7 +626,8 @@ Status BPlusTree::insert_into_parent(PageId left_id, int32_t key, PageId right_i
 // Поиск
 // ----------------------------------------------------------------------------
 
-Result<RecordId> BPlusTree::search(int32_t key) {
+template <typename KeyT>
+Result<RecordId> BPlusTreeT<KeyT>::search(const KeyT& key) {
     auto res = find_leaf_page(key);
     if (!res.ok()) return Result<RecordId>(res.status());
 
@@ -604,21 +635,22 @@ Result<RecordId> BPlusTree::search(int32_t key) {
     Status st = page_manager_.read_page(res.value(), leaf_page);
     if (!st.ok()) return Result<RecordId>(st);
 
-    const auto* header = BPlusTreePage::get_header(leaf_page);
-    const auto* keys = BPlusTreePage::get_keys(leaf_page);
-    const auto* values = BPlusTreePage::get_leaf_values(leaf_page);
+    const auto* header = BPlusTreePageT<KeyT>::get_header(leaf_page);
+    const auto* keys = BPlusTreePageT<KeyT>::get_keys(leaf_page);
+    const auto* values = BPlusTreePageT<KeyT>::get_leaf_values(leaf_page);
 
     // Бинарный поиск: O(log N) вместо линейного перебора слотов
-    const int idx = BPlusTreePage::find_key_index(leaf_page, key);
+    const int idx = BPlusTreePageT<KeyT>::find_key_index(leaf_page, key);
     if (idx < header->num_keys && keys[idx] == key) {
         return Result<RecordId>(values[idx]);
     }
 
     return Result<RecordId>(Status::Error(StatusCode::RecordNotFound,
-                                          "Key not found: " + std::to_string(key)));
+                                          "Key not found: " + key_to_string(key)));
 }
 
-Status BPlusTree::update(int32_t key, const RecordId& rid) {
+template <typename KeyT>
+Status BPlusTreeT<KeyT>::update(const KeyT& key, const RecordId& rid) {
     auto res = find_leaf_page(key);
     if (!res.ok()) return res.status();
 
@@ -626,27 +658,28 @@ Status BPlusTree::update(int32_t key, const RecordId& rid) {
     Status st = page_manager_.read_page(res.value(), leaf_page);
     if (!st.ok()) return st;
 
-    const auto* header = BPlusTreePage::get_header(leaf_page);
-    const auto* keys = BPlusTreePage::get_keys(leaf_page);
-    auto* values = BPlusTreePage::get_leaf_values(leaf_page);
+    const auto* header = BPlusTreePageT<KeyT>::get_header(leaf_page);
+    const auto* keys = BPlusTreePageT<KeyT>::get_keys(leaf_page);
+    auto* values = BPlusTreePageT<KeyT>::get_leaf_values(leaf_page);
 
-    const int idx = BPlusTreePage::find_key_index(leaf_page, key);
+    const int idx = BPlusTreePageT<KeyT>::find_key_index(leaf_page, key);
     if (idx >= header->num_keys || keys[idx] != key) {
-        return Status::Error(StatusCode::RecordNotFound, "Key not found: " + std::to_string(key));
+        return Status::Error(StatusCode::RecordNotFound, "Key not found: " + key_to_string(key));
     }
 
     values[idx] = rid;
     return page_manager_.write_page(res.value(), leaf_page);
 }
 
-Status BPlusTree::scan_range(int32_t low_key, int32_t high_key, std::vector<RecordId>& result) {
+template <typename KeyT>
+Status BPlusTreeT<KeyT>::scan_range(const KeyT& low_key, const KeyT& high_key, std::vector<RecordId>& result) {
     result.clear();
     if (low_key > high_key) {
         return Status::OK(); // Пустой диапазон — не ошибка
     }
     // end() держим в переменной: каждый вызов создаёт итератор с 4 КБ кэшем
     // страницы внутри, и вычислять его на каждой итерации цикла расточительно.
-    const IndexIterator stop = end();
+    const IndexIteratorT<KeyT> stop = end();
     for (auto it = lower_bound(low_key); it != stop; ++it) {
         auto [key, rid] = *it;
         if (key > high_key) {
@@ -657,12 +690,13 @@ Status BPlusTree::scan_range(int32_t low_key, int32_t high_key, std::vector<Reco
     return Status::OK();
 }
 
-Status BPlusTree::scan_range_half_open(int32_t low_key, int32_t high_key, std::vector<RecordId>& result) {
+template <typename KeyT>
+Status BPlusTreeT<KeyT>::scan_range_half_open(const KeyT& low_key, const KeyT& high_key, std::vector<RecordId>& result) {
     result.clear();
     if (low_key >= high_key) {
         return Status::OK();
     }
-    const IndexIterator stop = end();
+    const IndexIteratorT<KeyT> stop = end();
     for (auto it = lower_bound(low_key); it != stop; ++it) {
         auto [key, rid] = *it;
         if (key >= high_key) {
@@ -677,7 +711,8 @@ Status BPlusTree::scan_range_half_open(int32_t low_key, int32_t high_key, std::v
 // Удаление
 // ----------------------------------------------------------------------------
 
-Status BPlusTree::remove(int32_t key) {
+template <typename KeyT>
+Status BPlusTreeT<KeyT>::remove(const KeyT& key) {
     if (root_page_id_ == INVALID_PAGE_ID) {
         return Status::Error(StatusCode::RecordNotFound, "Tree is empty");
     }
@@ -690,19 +725,20 @@ Status BPlusTree::remove(int32_t key) {
     return remove_from_leaf(leaf_res.value(), key);
 }
 
-Status BPlusTree::remove_from_leaf(PageId leaf_id, int32_t key) {
+template <typename KeyT>
+Status BPlusTreeT<KeyT>::remove_from_leaf(PageId leaf_id, const KeyT& key) {
     Page leaf_page;
     Status st = page_manager_.read_page(leaf_id, leaf_page);
     if (!st.ok()) return st;
 
-    auto* header = BPlusTreePage::get_header(leaf_page);
-    auto* keys = BPlusTreePage::get_keys(leaf_page);
-    auto* values = BPlusTreePage::get_leaf_values(leaf_page);
+    auto* header = BPlusTreePageT<KeyT>::get_header(leaf_page);
+    auto* keys = BPlusTreePageT<KeyT>::get_keys(leaf_page);
+    auto* values = BPlusTreePageT<KeyT>::get_leaf_values(leaf_page);
 
-    const int remove_idx = BPlusTreePage::find_key_index(leaf_page, key);
+    const int remove_idx = BPlusTreePageT<KeyT>::find_key_index(leaf_page, key);
     if (remove_idx >= header->num_keys || keys[remove_idx] != key) {
         return Status::Error(StatusCode::RecordNotFound,
-                             "Key not found: " + std::to_string(key));
+                             "Key not found: " + key_to_string(key));
     }
 
     // Сдвигаем элементы влево
@@ -720,19 +756,20 @@ Status BPlusTree::remove_from_leaf(PageId leaf_id, int32_t key) {
         return adjust_root(leaf_id);
     }
 
-    if (header->num_keys < BPlusTreePage::MIN_KEYS_LEAF) {
+    if (header->num_keys < BPlusTreePageT<KeyT>::MIN_KEYS_LEAF) {
         return coalesce_or_redistribute(leaf_id);
     }
 
     return Status::OK();
 }
 
-Status BPlusTree::coalesce_or_redistribute(PageId page_id) {
+template <typename KeyT>
+Status BPlusTreeT<KeyT>::coalesce_or_redistribute(PageId page_id) {
     Page page;
     Status st = page_manager_.read_page(page_id, page);
     if (!st.ok()) return st;
 
-    auto* header = BPlusTreePage::get_header(page);
+    auto* header = BPlusTreePageT<KeyT>::get_header(page);
 
     if (page_id == root_page_id_) {
         return adjust_root(page_id);
@@ -749,8 +786,8 @@ Status BPlusTree::coalesce_or_redistribute(PageId page_id) {
     st = page_manager_.read_page(parent_id, parent_page);
     if (!st.ok()) return st;
 
-    const auto* parent_header = BPlusTreePage::get_header(parent_page);
-    const auto* parent_children = BPlusTreePage::get_internal_values(parent_page);
+    const auto* parent_header = BPlusTreePageT<KeyT>::get_header(parent_page);
+    const auto* parent_children = BPlusTreePageT<KeyT>::get_internal_values(parent_page);
 
     // Позиция страницы среди детей родителя (детей на один больше, чем ключей)
     uint32_t child_idx = 0;
@@ -774,8 +811,8 @@ Status BPlusTree::coalesce_or_redistribute(PageId page_id) {
     st = page_manager_.read_page(sibling_id, sibling_page);
     if (!st.ok()) return st;
 
-    const auto* sibling_header = BPlusTreePage::get_header(sibling_page);
-    const uint16_t min_keys = BPlusTreePage::min_keys_for(header->page_type);
+    const auto* sibling_header = BPlusTreePageT<KeyT>::get_header(sibling_page);
+    const uint16_t min_keys = BPlusTreePageT<KeyT>::min_keys_for(header->page_type);
 
     // У соседа есть запас — заимствуем один элемент (redistribute)
     if (sibling_header->num_keys > min_keys) {
@@ -788,22 +825,23 @@ Status BPlusTree::coalesce_or_redistribute(PageId page_id) {
                     parent_page, parent_id, child_idx, sibling_is_left);
 }
 
-Status BPlusTree::redistribute(Page& page, PageId page_id,
+template <typename KeyT>
+Status BPlusTreeT<KeyT>::redistribute(Page& page, PageId page_id,
                                Page& sibling, PageId sibling_id,
                                Page& parent, PageId parent_id,
                                uint32_t child_idx, bool sibling_is_left) {
-    auto* header = BPlusTreePage::get_header(page);
-    auto* keys = BPlusTreePage::get_keys(page);
-    auto* sib_header = BPlusTreePage::get_header(sibling);
-    auto* sib_keys = BPlusTreePage::get_keys(sibling);
-    auto* parent_keys = BPlusTreePage::get_keys(parent);
+    auto* header = BPlusTreePageT<KeyT>::get_header(page);
+    auto* keys = BPlusTreePageT<KeyT>::get_keys(page);
+    auto* sib_header = BPlusTreePageT<KeyT>::get_header(sibling);
+    auto* sib_keys = BPlusTreePageT<KeyT>::get_keys(sibling);
+    auto* parent_keys = BPlusTreePageT<KeyT>::get_keys(parent);
 
     const bool is_leaf = (header->page_type == BTreePageType::LEAF);
     PageId moved_child = INVALID_PAGE_ID;
 
     if (is_leaf) {
-        auto* values = BPlusTreePage::get_leaf_values(page);
-        auto* sib_values = BPlusTreePage::get_leaf_values(sibling);
+        auto* values = BPlusTreePageT<KeyT>::get_leaf_values(page);
+        auto* sib_values = BPlusTreePageT<KeyT>::get_leaf_values(sibling);
 
         if (sibling_is_left) {
             // Забираем последний элемент левого соседа в начало страницы
@@ -834,8 +872,8 @@ Status BPlusTree::redistribute(Page& page, PageId page_id,
             parent_keys[child_idx] = sib_keys[0];
         }
     } else {
-        auto* children = BPlusTreePage::get_internal_values(page);
-        auto* sib_children = BPlusTreePage::get_internal_values(sibling);
+        auto* children = BPlusTreePageT<KeyT>::get_internal_values(page);
+        auto* sib_children = BPlusTreePageT<KeyT>::get_internal_values(sibling);
 
         if (sibling_is_left) {
             // Ключ-разделитель опускается в текущий узел,
@@ -886,7 +924,8 @@ Status BPlusTree::redistribute(Page& page, PageId page_id,
     return Status::OK();
 }
 
-Status BPlusTree::coalesce(Page& page, PageId page_id,
+template <typename KeyT>
+Status BPlusTreeT<KeyT>::coalesce(Page& page, PageId page_id,
                            Page& sibling, PageId sibling_id,
                            Page& parent, PageId parent_id,
                            uint32_t child_idx, bool sibling_is_left) {
@@ -901,20 +940,20 @@ Status BPlusTree::coalesce(Page& page, PageId page_id,
     const uint32_t separator_idx = sibling_is_left ? child_idx - 1 : child_idx;
     const uint32_t removed_child_idx = separator_idx + 1;
 
-    auto* left_header = BPlusTreePage::get_header(*left);
-    auto* left_keys = BPlusTreePage::get_keys(*left);
-    auto* right_header = BPlusTreePage::get_header(*right);
-    auto* right_keys = BPlusTreePage::get_keys(*right);
+    auto* left_header = BPlusTreePageT<KeyT>::get_header(*left);
+    auto* left_keys = BPlusTreePageT<KeyT>::get_keys(*left);
+    auto* right_header = BPlusTreePageT<KeyT>::get_header(*right);
+    auto* right_keys = BPlusTreePageT<KeyT>::get_keys(*right);
 
-    auto* parent_header = BPlusTreePage::get_header(parent);
-    auto* parent_keys = BPlusTreePage::get_keys(parent);
-    auto* parent_children = BPlusTreePage::get_internal_values(parent);
+    auto* parent_header = BPlusTreePageT<KeyT>::get_header(parent);
+    auto* parent_keys = BPlusTreePageT<KeyT>::get_keys(parent);
+    auto* parent_children = BPlusTreePageT<KeyT>::get_internal_values(parent);
 
     std::vector<PageId> reparented;
 
     if (left_header->page_type == BTreePageType::LEAF) {
-        auto* left_values = BPlusTreePage::get_leaf_values(*left);
-        auto* right_values = BPlusTreePage::get_leaf_values(*right);
+        auto* left_values = BPlusTreePageT<KeyT>::get_leaf_values(*left);
+        auto* right_values = BPlusTreePageT<KeyT>::get_leaf_values(*right);
 
         for (uint32_t i = 0; i < right_header->num_keys; ++i) {
             left_keys[left_header->num_keys + i] = right_keys[i];
@@ -925,8 +964,8 @@ Status BPlusTree::coalesce(Page& page, PageId page_id,
         // Поддерживаем связный список листьев
         left_header->next_page_id = right_header->next_page_id;
     } else {
-        auto* left_children = BPlusTreePage::get_internal_values(*left);
-        auto* right_children = BPlusTreePage::get_internal_values(*right);
+        auto* left_children = BPlusTreePageT<KeyT>::get_internal_values(*left);
+        auto* right_children = BPlusTreePageT<KeyT>::get_internal_values(*right);
 
         // Ключ-разделитель из родителя опускается вниз между двумя наборами ключей
         left_keys[left_header->num_keys] = parent_keys[separator_idx];
@@ -973,19 +1012,20 @@ Status BPlusTree::coalesce(Page& page, PageId page_id,
     if (parent_id == root_page_id_) {
         return adjust_root(parent_id);
     }
-    if (parent_header->num_keys < BPlusTreePage::MIN_KEYS_INTERNAL) {
+    if (parent_header->num_keys < BPlusTreePageT<KeyT>::MIN_KEYS_INTERNAL) {
         return coalesce_or_redistribute(parent_id);
     }
 
     return Status::OK();
 }
 
-Status BPlusTree::adjust_root(PageId root_id) {
+template <typename KeyT>
+Status BPlusTreeT<KeyT>::adjust_root(PageId root_id) {
     Page root_page;
     Status st = page_manager_.read_page(root_id, root_page);
     if (!st.ok()) return st;
 
-    const auto* header = BPlusTreePage::get_header(root_page);
+    const auto* header = BPlusTreePageT<KeyT>::get_header(root_page);
 
     // 1. Корень — лист и он опустел: дерево становится пустым
     if (header->page_type == BTreePageType::LEAF && header->num_keys == 0) {
@@ -1000,7 +1040,7 @@ Status BPlusTree::adjust_root(PageId root_id) {
 
     // 2. Корень — внутренний узел без ключей: единственный ребёнок становится корнем
     if (header->page_type == BTreePageType::INTERNAL && header->num_keys == 0) {
-        const auto* children = BPlusTreePage::get_internal_values(root_page);
+        const auto* children = BPlusTreePageT<KeyT>::get_internal_values(root_page);
         const PageId new_root_id = children[0];
 
         st = set_parent(new_root_id, INVALID_PAGE_ID);
@@ -1022,18 +1062,20 @@ Status BPlusTree::adjust_root(PageId root_id) {
 // Проверка целостности (используется в тестах)
 // ----------------------------------------------------------------------------
 
-Status BPlusTree::validate() {
+template <typename KeyT>
+Status BPlusTreeT<KeyT>::validate() {
     if (root_page_id_ == INVALID_PAGE_ID) {
         return Status::OK();
     }
-    int32_t prev_key = 0;
+    KeyT prev_key{};
     bool has_prev = false;
     int leaf_depth = -1;
     return validate_subtree(root_page_id_, INVALID_PAGE_ID, &prev_key, &has_prev, 0, &leaf_depth);
 }
 
-Status BPlusTree::validate_subtree(PageId page_id, PageId expected_parent,
-                                   int32_t* prev_key, bool* has_prev,
+template <typename KeyT>
+Status BPlusTreeT<KeyT>::validate_subtree(PageId page_id, PageId expected_parent,
+                                   KeyT* prev_key, bool* has_prev,
                                    int depth, int* leaf_depth) {
     if (depth > MAX_TREE_DEPTH) {
         return Status::Error(StatusCode::CorruptedData, "Tree is too deep");
@@ -1043,8 +1085,8 @@ Status BPlusTree::validate_subtree(PageId page_id, PageId expected_parent,
     Status st = page_manager_.read_page(page_id, page);
     if (!st.ok()) return st;
 
-    const auto* header = BPlusTreePage::get_header(page);
-    const auto* keys = BPlusTreePage::get_keys(page);
+    const auto* header = BPlusTreePageT<KeyT>::get_header(page);
+    const auto* keys = BPlusTreePageT<KeyT>::get_keys(page);
 
     if (header->parent_page_id != expected_parent) {
         return Status::Error(StatusCode::CorruptedData,
@@ -1052,8 +1094,8 @@ Status BPlusTree::validate_subtree(PageId page_id, PageId expected_parent,
     }
 
     const uint16_t max_keys = (header->page_type == BTreePageType::LEAF)
-                                  ? BPlusTreePage::MAX_KEYS_LEAF
-                                  : BPlusTreePage::MAX_KEYS_INTERNAL;
+                                  ? BPlusTreePageT<KeyT>::MAX_KEYS_LEAF
+                                  : BPlusTreePageT<KeyT>::MAX_KEYS_INTERNAL;
     if (header->num_keys > max_keys) {
         return Status::Error(StatusCode::CorruptedData,
                              "Page " + std::to_string(page_id) + " overflows key capacity");
@@ -1061,7 +1103,7 @@ Status BPlusTree::validate_subtree(PageId page_id, PageId expected_parent,
 
     // Все узлы, кроме корня, должны быть заполнены минимум наполовину
     if (page_id != root_page_id_) {
-        const uint16_t min_keys = BPlusTreePage::min_keys_for(header->page_type);
+        const uint16_t min_keys = BPlusTreePageT<KeyT>::min_keys_for(header->page_type);
         if (header->num_keys < min_keys) {
             return Status::Error(StatusCode::CorruptedData,
                                  "Page " + std::to_string(page_id) + " underflows (" +
@@ -1088,7 +1130,7 @@ Status BPlusTree::validate_subtree(PageId page_id, PageId expected_parent,
         for (uint32_t i = 0; i < header->num_keys; ++i) {
             if (*has_prev && *prev_key >= keys[i]) {
                 return Status::Error(StatusCode::CorruptedData,
-                                     "Global key order violated at key " + std::to_string(keys[i]));
+                                     "Global key order violated at key " + key_to_string(keys[i]));
             }
             *prev_key = keys[i];
             *has_prev = true;
@@ -1101,7 +1143,7 @@ Status BPlusTree::validate_subtree(PageId page_id, PageId expected_parent,
                              "Internal page " + std::to_string(page_id) + " has no keys");
     }
 
-    const auto* children = BPlusTreePage::get_internal_values(page);
+    const auto* children = BPlusTreePageT<KeyT>::get_internal_values(page);
     for (uint32_t i = 0; i <= header->num_keys; ++i) {
         st = validate_subtree(children[i], page_id, prev_key, has_prev, depth + 1, leaf_depth);
         if (!st.ok()) return st;
@@ -1109,3 +1151,15 @@ Status BPlusTree::validate_subtree(PageId page_id, PageId expected_parent,
 
     return Status::OK();
 }
+
+
+// ============================================================================
+// Явные инстанцирования: индекс по INT-колонке и по STRING-колонке
+// ============================================================================
+template class BPlusTreePageT<int32_t>;
+template class IndexIteratorT<int32_t>;
+template class BPlusTreeT<int32_t>;
+
+template class BPlusTreePageT<StringKey>;
+template class IndexIteratorT<StringKey>;
+template class BPlusTreeT<StringKey>;
