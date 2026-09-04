@@ -4,6 +4,7 @@
 #include <numeric>
 #include <algorithm>
 #include <random>
+#include <map>
 
 #include "../src/index/b_plus_tree.h"
 
@@ -327,6 +328,357 @@ TEST_F(BPlusTreeTest, RemoveAndRebalance) {
             EXPECT_FALSE(res.ok()) << "Четный ключ " << i << " не должен находиться после удаления";
         }
     }
+
+    pm.close();
+}
+// ----------------------------------------------------------------------------
+// Тест 11: Уникальность ключей (модификатор INDEXED из задания)
+// ----------------------------------------------------------------------------
+TEST_F(BPlusTreeTest, DuplicateKeyIsRejected) {
+    PageManager pm(db_file);
+    ASSERT_TRUE(pm.open().ok());
+    BPlusTree tree(pm);
+
+    ASSERT_TRUE(tree.insert(10, RecordId{1, 0}).ok());
+
+    Status dup = tree.insert(10, RecordId{2, 0});
+    EXPECT_FALSE(dup.ok());
+    EXPECT_EQ(dup.code, StatusCode::UniqueConstraintViolation);
+
+    // Исходная ссылка не должна быть перезаписана
+    auto res = tree.search(10);
+    ASSERT_TRUE(res.ok());
+    EXPECT_EQ(res.value().page_id, 1u);
+
+    // Дубликат в дереве с несколькими листьями
+    for (int i = 100; i < 1000; ++i) {
+        ASSERT_TRUE(tree.insert(i, RecordId{static_cast<PageId>(i), 0}).ok());
+    }
+    EXPECT_EQ(tree.insert(500, RecordId{9, 9}).code, StatusCode::UniqueConstraintViolation);
+    EXPECT_TRUE(tree.validate().ok()) << tree.validate().message;
+
+    pm.close();
+}
+
+// ----------------------------------------------------------------------------
+// Тест 12: update() переставляет ссылку, не меняя структуру дерева
+// ----------------------------------------------------------------------------
+TEST_F(BPlusTreeTest, UpdateExistingKey) {
+    PageManager pm(db_file);
+    ASSERT_TRUE(pm.open().ok());
+    BPlusTree tree(pm);
+
+    for (int i = 1; i <= 1000; ++i) {
+        ASSERT_TRUE(tree.insert(i, RecordId{static_cast<PageId>(i), 0}).ok());
+    }
+
+    ASSERT_TRUE(tree.update(777, RecordId{4242, 7}).ok());
+
+    auto res = tree.search(777);
+    ASSERT_TRUE(res.ok());
+    EXPECT_EQ(res.value().page_id, 4242u);
+    EXPECT_EQ(res.value().slot_id, 7);
+
+    EXPECT_FALSE(tree.update(999999, RecordId{1, 1}).ok());
+    EXPECT_TRUE(tree.validate().ok());
+
+    pm.close();
+}
+
+// ----------------------------------------------------------------------------
+// Тест 13: Многоуровневое дерево остаётся корректным (validate)
+// ----------------------------------------------------------------------------
+TEST_F(BPlusTreeTest, StructureStaysValidAfterManyInserts) {
+    PageManager pm(db_file);
+    ASSERT_TRUE(pm.open().ok());
+    BPlusTree tree(pm);
+
+    const int count = 20000; // Гарантированно несколько уровней дерева
+    std::vector<int32_t> keys(count);
+    std::iota(keys.begin(), keys.end(), 1);
+    std::mt19937 g(2024);
+    std::shuffle(keys.begin(), keys.end(), g);
+
+    for (int32_t key : keys) {
+        ASSERT_TRUE(tree.insert(key, RecordId{static_cast<PageId>(key), 0}).ok());
+    }
+
+    Status valid = tree.validate();
+    EXPECT_TRUE(valid.ok()) << valid.message;
+
+    // Обход итератором должен вернуть все ключи по возрастанию
+    int expected = 1;
+    int seen = 0;
+    for (auto it = tree.begin(); it != tree.end(); ++it) {
+        EXPECT_EQ((*it).first, expected++);
+        seen++;
+    }
+    EXPECT_EQ(seen, count);
+
+    pm.close();
+}
+
+// ----------------------------------------------------------------------------
+// Тест 14: Удаление с реальным слиянием и перераспределением узлов
+// ----------------------------------------------------------------------------
+TEST_F(BPlusTreeTest, RemoveWithMergeAndRedistribute) {
+    PageManager pm(db_file);
+    ASSERT_TRUE(pm.open().ok());
+    BPlusTree tree(pm);
+
+    // 5000 ключей — это много листов, поэтому удаление вызовет
+    // и заимствование у соседа, и слияние узлов, и понижение высоты дерева.
+    const int count = 5000;
+    for (int i = 1; i <= count; ++i) {
+        ASSERT_TRUE(tree.insert(i, RecordId{static_cast<PageId>(i), 1}).ok());
+    }
+
+    for (int i = 2; i <= count; i += 2) {
+        Status st = tree.remove(i);
+        ASSERT_TRUE(st.ok()) << "Ошибка удаления ключа " << i << ": " << st.message;
+    }
+
+    Status valid = tree.validate();
+    ASSERT_TRUE(valid.ok()) << "Дерево повреждено после удалений: " << valid.message;
+
+    for (int i = 1; i <= count; ++i) {
+        auto res = tree.search(i);
+        if (i % 2 == 1) {
+            ASSERT_TRUE(res.ok()) << "Нечётный ключ " << i << " должен существовать";
+            EXPECT_EQ(res.value().page_id, static_cast<PageId>(i));
+        } else {
+            EXPECT_FALSE(res.ok()) << "Чётный ключ " << i << " не должен находиться";
+        }
+    }
+
+    // Связный список листьев не должен быть порван: итератор обязан
+    // вернуть ровно оставшиеся 2500 ключей по возрастанию.
+    std::vector<int32_t> scanned;
+    for (auto it = tree.begin(); it != tree.end(); ++it) {
+        scanned.push_back((*it).first);
+    }
+    ASSERT_EQ(scanned.size(), static_cast<size_t>(count / 2));
+    EXPECT_TRUE(std::is_sorted(scanned.begin(), scanned.end()));
+    EXPECT_EQ(scanned.front(), 1);
+    EXPECT_EQ(scanned.back(), count - 1);
+
+    pm.close();
+}
+
+// ----------------------------------------------------------------------------
+// Тест 15: Полное опустошение дерева и повторное наполнение
+// ----------------------------------------------------------------------------
+TEST_F(BPlusTreeTest, RemoveAllThenReinsert) {
+    PageManager pm(db_file);
+    ASSERT_TRUE(pm.open().ok());
+    BPlusTree tree(pm);
+
+    const int count = 3000;
+    std::vector<int32_t> keys(count);
+    std::iota(keys.begin(), keys.end(), 1);
+    std::mt19937 g(777);
+    std::shuffle(keys.begin(), keys.end(), g);
+
+    for (int32_t key : keys) {
+        ASSERT_TRUE(tree.insert(key, RecordId{static_cast<PageId>(key), 0}).ok());
+    }
+
+    std::shuffle(keys.begin(), keys.end(), g);
+    for (int32_t key : keys) {
+        Status st = tree.remove(key);
+        ASSERT_TRUE(st.ok()) << "Не удалось удалить ключ " << key << ": " << st.message;
+        ASSERT_TRUE(tree.validate().ok()) << "Дерево повреждено после удаления " << key;
+    }
+
+    EXPECT_TRUE(tree.empty());
+    EXPECT_EQ(tree.get_root_page_id(), INVALID_PAGE_ID);
+    EXPECT_TRUE(tree.begin() == tree.end());
+
+    // Дерево должно быть готово принимать данные заново
+    ASSERT_TRUE(tree.insert(42, RecordId{1, 1}).ok());
+    EXPECT_TRUE(tree.search(42).ok());
+
+    pm.close();
+}
+
+// ----------------------------------------------------------------------------
+// Тест 16: Удаление отсутствующего ключа не ломает дерево
+// ----------------------------------------------------------------------------
+TEST_F(BPlusTreeTest, RemoveMissingKeyIsSafe) {
+    PageManager pm(db_file);
+    ASSERT_TRUE(pm.open().ok());
+    BPlusTree tree(pm);
+
+    // Удаление из пустого дерева
+    EXPECT_FALSE(tree.remove(1).ok());
+
+    for (int i = 0; i < 1000; i += 2) {
+        ASSERT_TRUE(tree.insert(i, RecordId{static_cast<PageId>(i), 0}).ok());
+    }
+
+    EXPECT_EQ(tree.remove(1).code, StatusCode::RecordNotFound);
+    EXPECT_EQ(tree.remove(-5).code, StatusCode::RecordNotFound);
+    EXPECT_EQ(tree.remove(100000).code, StatusCode::RecordNotFound);
+
+    EXPECT_TRUE(tree.validate().ok());
+    EXPECT_TRUE(tree.search(500).ok());
+
+    pm.close();
+}
+
+// ----------------------------------------------------------------------------
+// Тест 17: Границы диапазонного поиска
+// ----------------------------------------------------------------------------
+TEST_F(BPlusTreeTest, RangeScanBoundaries) {
+    PageManager pm(db_file);
+    ASSERT_TRUE(pm.open().ok());
+    BPlusTree tree(pm);
+
+    for (int i = 1; i <= 2000; ++i) {
+        ASSERT_TRUE(tree.insert(i * 2, RecordId{static_cast<PageId>(i), 0}).ok()); // чётные 2..4000
+    }
+
+    std::vector<RecordId> res;
+
+    // Обе границы включительно
+    ASSERT_TRUE(tree.scan_range(10, 20, res).ok());
+    ASSERT_EQ(res.size(), 6u); // 10,12,14,16,18,20
+
+    // Полуоткрытый интервал [10, 20) — семантика BETWEEN из задания
+    ASSERT_TRUE(tree.scan_range_half_open(10, 20, res).ok());
+    ASSERT_EQ(res.size(), 5u); // 10,12,14,16,18
+
+    // Границы не совпадают с существующими ключами
+    ASSERT_TRUE(tree.scan_range(11, 19, res).ok());
+    EXPECT_EQ(res.size(), 4u); // 12,14,16,18
+
+    // Пустой и перевёрнутый диапазоны
+    ASSERT_TRUE(tree.scan_range(5001, 6000, res).ok());
+    EXPECT_TRUE(res.empty());
+    ASSERT_TRUE(tree.scan_range(100, 50, res).ok());
+    EXPECT_TRUE(res.empty());
+
+    // Диапазон, покрывающий всё дерево
+    ASSERT_TRUE(tree.scan_range(-1000, 100000, res).ok());
+    EXPECT_EQ(res.size(), 2000u);
+
+    pm.close();
+}
+
+// ----------------------------------------------------------------------------
+// Тест 18: Отрицательные и граничные значения ключей
+// ----------------------------------------------------------------------------
+TEST_F(BPlusTreeTest, NegativeAndExtremeKeys) {
+    PageManager pm(db_file);
+    ASSERT_TRUE(pm.open().ok());
+    BPlusTree tree(pm);
+
+    std::vector<int32_t> keys = {0, -1, 1, INT32_MIN, INT32_MAX, -1000000, 1000000};
+    for (int32_t key : keys) {
+        ASSERT_TRUE(tree.insert(key, RecordId{static_cast<PageId>(key & 0xFFFF), 0}).ok())
+            << "Ключ " << key;
+    }
+
+    for (int32_t key : keys) {
+        EXPECT_TRUE(tree.search(key).ok()) << "Ключ " << key << " не найден";
+    }
+
+    std::vector<int32_t> scanned;
+    for (auto it = tree.begin(); it != tree.end(); ++it) {
+        scanned.push_back((*it).first);
+    }
+    std::vector<int32_t> expected = keys;
+    std::sort(expected.begin(), expected.end());
+    EXPECT_EQ(scanned, expected);
+
+    EXPECT_TRUE(tree.validate().ok());
+    pm.close();
+}
+
+// ----------------------------------------------------------------------------
+// Тест 19: Стресс-тест — случайные вставки и удаления против эталонного std::map
+//
+// Самая ценная проверка структуры: после каждой операции дерево сверяется
+// с эталоном и проходит структурную валидацию. Именно такой сценарий ловил
+// расхождение между search() и обходом по связному списку листьев.
+// ----------------------------------------------------------------------------
+TEST_F(BPlusTreeTest, RandomizedStressAgainstReferenceMap) {
+    PageManager pm(db_file);
+    ASSERT_TRUE(pm.open().ok());
+    BPlusTree tree(pm);
+
+    std::map<int32_t, RecordId> reference;
+    std::mt19937 rng(20260904);
+    std::uniform_int_distribution<int32_t> key_dist(-3000, 3000);
+
+    const int operations = 6000;
+    for (int step = 0; step < operations; ++step) {
+        const int32_t key = key_dist(rng);
+        // 60% вставок, 40% удалений — дерево то растёт, то сжимается
+        const bool do_insert = (rng() % 100) < 60;
+
+        if (do_insert) {
+            const RecordId rid{static_cast<PageId>(std::abs(key) + 1), static_cast<uint16_t>(step % 100)};
+            Status st = tree.insert(key, rid);
+
+            if (reference.count(key)) {
+                ASSERT_EQ(st.code, StatusCode::UniqueConstraintViolation)
+                    << "Дубликат ключа " << key << " должен быть отклонён (шаг " << step << ")";
+            } else {
+                ASSERT_TRUE(st.ok()) << "Вставка " << key << " на шаге " << step << ": " << st.message;
+                reference[key] = rid;
+            }
+        } else {
+            Status st = tree.remove(key);
+            if (reference.count(key)) {
+                ASSERT_TRUE(st.ok()) << "Удаление " << key << " на шаге " << step << ": " << st.message;
+                reference.erase(key);
+            } else {
+                ASSERT_EQ(st.code, StatusCode::RecordNotFound)
+                    << "Удаление отсутствующего ключа " << key << " на шаге " << step;
+            }
+        }
+
+        // Периодическая полная сверка (на каждом шаге это было бы слишком долго)
+        if (step % 250 == 0) {
+            Status valid = tree.validate();
+            ASSERT_TRUE(valid.ok()) << "Шаг " << step << ": " << valid.message;
+        }
+    }
+
+    ASSERT_TRUE(tree.validate().ok()) << tree.validate().message;
+
+    // 1) Каждый ключ эталона находится точечным поиском
+    for (const auto& kv : reference) {
+        auto res = tree.search(kv.first);
+        ASSERT_TRUE(res.ok()) << "Ключ " << kv.first << " потерян";
+        EXPECT_EQ(res.value().page_id, kv.second.page_id);
+        EXPECT_EQ(res.value().slot_id, kv.second.slot_id);
+    }
+
+    // 2) Обход по связному списку листьев даёт ровно те же ключи в том же порядке.
+    //    Именно это расхождение и означало «тихую» потерю данных при слиянии узлов.
+    std::vector<int32_t> scanned;
+    const IndexIterator stop = tree.end();
+    for (auto it = tree.begin(); it != stop; ++it) {
+        scanned.push_back((*it).first);
+    }
+
+    std::vector<int32_t> expected;
+    expected.reserve(reference.size());
+    for (const auto& kv : reference) expected.push_back(kv.first);
+
+    ASSERT_EQ(scanned.size(), expected.size())
+        << "Обход листьев видит не все записи: " << scanned.size()
+        << " вместо " << expected.size();
+    EXPECT_EQ(scanned, expected);
+
+    // 3) Диапазонный поиск согласован с эталоном
+    std::vector<RecordId> range;
+    ASSERT_TRUE(tree.scan_range(-500, 500, range).ok());
+    const size_t expected_in_range = static_cast<size_t>(
+        std::distance(reference.lower_bound(-500), reference.upper_bound(500)));
+    EXPECT_EQ(range.size(), expected_in_range);
 
     pm.close();
 }
