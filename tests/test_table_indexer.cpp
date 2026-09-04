@@ -383,10 +383,10 @@ TEST_F(TableIndexerTest, BuildIndexRejectsDuplicatesAndNulls) {
     // Неудачное построение не должно оставлять «полуготовый» индекс в каталоге
     EXPECT_FALSE(im_->has_index(TableIndexer::index_name_for("users", "id")));
 
-    // Индекс по строковой колонке пока не поддерживается
+    // По строковой колонке индекс строится (значения "a" и "b" различны)
     auto str_res = ti_->build_index(users_, "name");
-    EXPECT_FALSE(str_res.ok());
-    EXPECT_EQ(str_res.status().code, StatusCode::TypeMismatch);
+    ASSERT_TRUE(str_res.ok()) << str_res.status().message;
+    EXPECT_EQ(str_res.value().key_type, ColumnType::String);
 
     // Несуществующая колонка
     EXPECT_EQ(ti_->build_index(users_, "нет_такой").status().code, StatusCode::ColumnNotFound);

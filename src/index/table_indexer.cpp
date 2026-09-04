@@ -44,19 +44,6 @@ std::string TableIndexer::index_name_for(const std::string& table_name,
     return "idx_" + table_name + "_" + column_name;
 }
 
-Result<int32_t> TableIndexer::to_index_key(const Value& value) {
-    if (value.is_null()) {
-        return Result<int32_t>(Status::Error(StatusCode::NullConstraintViolation,
-                                             "NULL cannot be used as an index key"));
-    }
-    if (value.get_type() != ColumnType::Int) {
-        return Result<int32_t>(Status::Error(
-            StatusCode::TypeMismatch,
-            "Only INT columns can be indexed: B+ tree keys are int32"));
-    }
-    return Result<int32_t>(value.get_int());
-}
-
 // ----------------------------------------------------------------------------
 // Построение индексов
 // ----------------------------------------------------------------------------
@@ -84,14 +71,6 @@ Result<IndexInfo> TableIndexer::build_index(const TableSchema& schema,
     }
 
     const ColumnDef& column = schema.columns[static_cast<size_t>(col_idx)];
-    if (column.type != ColumnType::Int) {
-        return Result<IndexInfo>(Status::Error(
-            StatusCode::TypeMismatch,
-            "Cannot build index on " + schema.table_name + "." + column_name +
-                ": column type " + columnTypeToString(column.type) +
-                " is not supported by the int32-keyed B+ tree"));
-    }
-
     const std::string index_name = index_name_for(schema.table_name, column_name);
 
     // Индекс мог быть создан ранее — тогда пересоздаём его с нуля,
@@ -128,13 +107,7 @@ Result<IndexInfo> TableIndexer::build_index(const TableSchema& schema,
                         " is INDEXED and must not contain NULL"));
             }
 
-            auto key_res = to_index_key(value);
-            if (!key_res.ok()) {
-                index_manager_.drop_index(index_name);
-                return Result<IndexInfo>(key_res.status());
-            }
-
-            Status st = index_manager_.insert_entry(index_name, key_res.value(), record.id);
+            Status st = index_manager_.insert_entry(index_name, value, record.id);
             if (!st.ok()) {
                 index_manager_.drop_index(index_name);
                 if (st.code == StatusCode::UniqueConstraintViolation) {
@@ -207,11 +180,7 @@ Result<RecordId> TableIndexer::insert_row(TableSchema& schema, const std::vector
         const std::string index_name = index_name_for(schema.table_name, column.name);
         if (!index_manager_.has_index(index_name)) continue;
 
-        auto key_res = to_index_key(fields[i]);
-        if (!key_res.ok()) {
-            return Result<RecordId>(key_res.status());
-        }
-        if (index_manager_.find_entry(index_name, key_res.value()).ok()) {
+        if (index_manager_.find_entry(index_name, fields[i]).ok()) {
             return Result<RecordId>(Status::Error(
                 StatusCode::UniqueConstraintViolation,
                 "Duplicate value " + fields[i].to_string() + " for indexed column " +
@@ -271,7 +240,7 @@ Result<RecordId> TableIndexer::insert_row(TableSchema& schema, const std::vector
     const RecordId rid = insert_res.value();
 
     // 4. Обновляем индексы. При сбое откатываем всё, что успели сделать.
-    std::vector<std::pair<std::string, int32_t>> applied;
+    std::vector<std::pair<std::string, Value>> applied;
     for (size_t i = 0; i < schema.columns.size(); ++i) {
         const ColumnDef& column = schema.columns[i];
         if (!column.is_indexed) continue;
@@ -279,21 +248,16 @@ Result<RecordId> TableIndexer::insert_row(TableSchema& schema, const std::vector
         const std::string index_name = index_name_for(schema.table_name, column.name);
         if (!index_manager_.has_index(index_name)) continue;
 
-        auto key_res = to_index_key(fields[i]);
-        if (!key_res.ok()) {
-            st = key_res.status();
-        } else {
-            st = index_manager_.insert_entry(index_name, key_res.value(), rid);
-        }
-
+        st = index_manager_.insert_entry(index_name, fields[i], rid);
         if (!st.ok()) {
+            // Откатываем уже применённые индексы и саму запись
             for (const auto& entry : applied) {
                 index_manager_.remove_entry(entry.first, entry.second);
             }
             record_manager_.delete_record(rid);
             return Result<RecordId>(st);
         }
-        applied.emplace_back(index_name, key_res.value());
+        applied.emplace_back(index_name, fields[i]);
     }
 
     return Result<RecordId>(rid);
@@ -312,12 +276,7 @@ Status TableIndexer::remove_from_indexes(const TableSchema& schema,
         const std::string index_name = index_name_for(schema.table_name, column.name);
         if (!index_manager_.has_index(index_name)) continue;
 
-        auto key_res = to_index_key(fields[i]);
-        if (!key_res.ok()) {
-            return key_res.status();
-        }
-
-        Status st = index_manager_.remove_entry(index_name, key_res.value());
+        Status st = index_manager_.remove_entry(index_name, fields[i]);
         // Отсутствие ключа не считаем ошибкой: индекс мог быть построен позже
         if (!st.ok() && st.code != StatusCode::RecordNotFound) {
             return st;
@@ -405,25 +364,30 @@ Result<SelectResult> TableIndexer::select_equal(const TableSchema& schema,
     // ------------------------------------------------------------------
     const std::string index_name = index_name_for(schema.table_name, column_name);
     if (!value.is_null() && index_manager_.has_index(index_name)) {
-        auto key_res = to_index_key(value);
-        if (key_res.ok()) {
-            SelectResult out;
-            out.method = AccessMethod::IndexLookup;
+        SelectResult out;
+        out.method = AccessMethod::IndexLookup;
 
-            auto rid_res = index_manager_.find_entry(index_name, key_res.value());
-            if (rid_res.ok()) {
-                auto record_res = record_manager_.get_record(rid_res.value(), schema.columns);
-                if (record_res.ok()) {
-                    out.records.push_back(record_res.value());
-                    out.pages_examined = 1;
-                } else if (record_res.status().code != StatusCode::RecordNotFound) {
-                    return Result<SelectResult>(record_res.status());
-                }
-            } else if (rid_res.status().code != StatusCode::RecordNotFound) {
-                return Result<SelectResult>(rid_res.status());
+        auto rid_res = index_manager_.find_entry(index_name, value);
+        if (rid_res.ok()) {
+            auto record_res = record_manager_.get_record(rid_res.value(), schema.columns);
+            if (record_res.ok()) {
+                out.records.push_back(record_res.value());
+                out.pages_examined = 1;
+            } else if (record_res.status().code != StatusCode::RecordNotFound) {
+                return Result<SelectResult>(record_res.status());
             }
-
             return Result<SelectResult>(std::move(out));
+        }
+
+        // Ключ не найден — это не ошибка, вернём пустую выборку.
+        // А вот несовпадение типа или слишком длинная строка означают,
+        // что индекс к этому запросу неприменим: падаем в полный скан.
+        const StatusCode code = rid_res.status().code;
+        if (code == StatusCode::RecordNotFound) {
+            return Result<SelectResult>(std::move(out));
+        }
+        if (code != StatusCode::TypeMismatch && code != StatusCode::InvalidArgument) {
+            return Result<SelectResult>(rid_res.status());
         }
     }
 
@@ -471,24 +435,20 @@ Result<SelectResult> TableIndexer::select_range(const TableSchema& schema,
     // Быстрый путь: диапазонный обход листьев B+ дерева через связный список
     const std::string index_name = index_name_for(schema.table_name, column_name);
     if (index_manager_.has_index(index_name)) {
-        auto low_res = to_index_key(low);
-        auto high_res = to_index_key(high);
+        std::vector<RecordId> rids;
+        const Status st = high_inclusive
+                              ? index_manager_.range_scan(index_name, low, high, rids)
+                              : index_manager_.range_scan_half_open(index_name, low, high, rids);
 
-        if (low_res.ok() && high_res.ok()) {
-            const int32_t low_key = low_res.value();
-            int32_t high_key = high_res.value();
+        // Если индекс к запросу неприменим (не тот тип ключа, слишком длинная
+        // строка) — не считаем это ошибкой запроса, а делаем полный скан.
+        const bool index_usable = st.ok();
+        if (!index_usable && st.code != StatusCode::TypeMismatch &&
+            st.code != StatusCode::InvalidArgument) {
+            return Result<SelectResult>(st);
+        }
 
-            std::vector<RecordId> rids;
-            Status st;
-            if (high_inclusive) {
-                st = index_manager_.range_scan(index_name, low_key, high_key, rids);
-            } else {
-                auto tree_res = index_manager_.get_index(index_name);
-                if (!tree_res.ok()) return Result<SelectResult>(tree_res.status());
-                st = tree_res.value().scan_range_half_open(low_key, high_key, rids);
-            }
-            if (!st.ok()) return Result<SelectResult>(st);
-
+        if (index_usable) {
             auto records_res = fetch_all(schema, rids);
             if (!records_res.ok()) return Result<SelectResult>(records_res.status());
 
