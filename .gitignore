@@ -1,5 +1,7 @@
 # Сборка
 build/
+build-*/
+cmake-build-*/
 bin/
 *.o
 *.a
