@@ -251,7 +251,8 @@ constexpr uint32_t DB_MAGIC_NUMBER = 0xBEEFCAFE;
 #pragma pack(push, 1)
 struct DatabaseMetadata {
     uint32_t magic_number;
-    PageId root_page_id;
+    PageId root_page_id;          // Корень «главного» дерева файла
+    PageId index_catalog_page_id; // Начало цепочки страниц каталога индексов
 };
 #pragma pack(pop)
 
