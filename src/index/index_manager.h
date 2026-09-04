@@ -15,8 +15,8 @@ struct IndexInfo {
     std::string column_name;
     PageId root_page_id{INVALID_PAGE_ID};
 
-    // Тип индексируемой колонки. B+ дерево работает с ключами int32_t,
-    // поэтому пока поддерживается только ColumnType::Int.
+    // Тип индексируемой колонки: определяет, каким деревом обслуживается
+    // индекс — BPlusTree (ключ int32_t) или StringBPlusTree (ключ StringKey).
     ColumnType key_type{ColumnType::Int};
 };
 
@@ -64,27 +64,37 @@ public:
 
     // Получение существующего B+ дерева по имени индекса.
     // У дерева уже настроен listener, который сохранит новый корень в каталоге.
+    // Метод возвращает ошибку, если тип ключа индекса не совпадает с деревом.
     Result<BPlusTree> get_index(const std::string& index_name);
+    Result<StringBPlusTree> get_string_index(const std::string& index_name);
 
     // ------------------------------------------------------------------
     // Операции над содержимым индекса
     // ------------------------------------------------------------------
 
+    // Ключ передаётся как Value: каталог сам выбирает дерево по типу
+    // колонки (INT -> BPlusTree, STRING -> StringBPlusTree).
+
     // Вставка пары (ключ -> ссылка на запись)
-    Status insert_entry(const std::string& index_name, int32_t key, const RecordId& rid);
+    Status insert_entry(const std::string& index_name, const Value& key, const RecordId& rid);
 
     // Удаление ключа
-    Status remove_entry(const std::string& index_name, int32_t key);
+    Status remove_entry(const std::string& index_name, const Value& key);
 
     // Переустановка ссылки для существующего ключа
-    Status update_entry(const std::string& index_name, int32_t key, const RecordId& rid);
+    Status update_entry(const std::string& index_name, const Value& key, const RecordId& rid);
 
     // Точечный поиск: ключ -> RecordId
-    Result<RecordId> find_entry(const std::string& index_name, int32_t key);
+    Result<RecordId> find_entry(const std::string& index_name, const Value& key);
 
     // Диапазонный поиск [low_key, high_key]
-    Status range_scan(const std::string& index_name, int32_t low_key, int32_t high_key,
+    Status range_scan(const std::string& index_name, const Value& low_key, const Value& high_key,
                       std::vector<RecordId>& result);
+
+    // Диапазонный поиск [low_key, high_key) — семантика BETWEEN из задания
+    Status range_scan_half_open(const std::string& index_name,
+                                const Value& low_key, const Value& high_key,
+                                std::vector<RecordId>& result);
 
     // Полный обход индекса в порядке возрастания ключей
     Status full_scan(const std::string& index_name, std::vector<RecordId>& result);
@@ -113,7 +123,22 @@ private:
     Result<IndexInfo*> lookup(const std::string& index_name);
 
     // Собрать дерево для записи каталога и подписать его на смену корня
-    BPlusTree make_tree(IndexInfo& info);
+    template <typename KeyT>
+    BPlusTreeT<KeyT> make_tree(IndexInfo& info);
+
+    // Преобразование значения колонки в ключ соответствующего дерева
+    static Result<int32_t> to_int_key(const Value& value);
+    static Result<StringKey> to_string_key(const Value& value);
+
+    // Типизированные операции: вызываются после определения типа ключа
+    template <typename KeyT>
+    Status insert_typed(IndexInfo& info, const KeyT& key, const RecordId& rid);
+
+    template <typename KeyT>
+    Status remove_typed(IndexInfo& info, const KeyT& key);
+
+    // Сохранить новый корень дерева в каталоге, если он сменился
+    Status sync_root(IndexInfo& info, PageId actual_root);
 
     // Сериализация/десериализация каталога
     std::vector<uint8_t> serialize_catalog() const;

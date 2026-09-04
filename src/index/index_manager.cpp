@@ -323,15 +323,9 @@ Result<IndexInfo> IndexManager::create_index(const std::string& index_name,
         }
     }
 
-    // B+ дерево умеет работать только с целочисленными ключами
-    if (key_type != ColumnType::Int) {
-        return Result<IndexInfo>(Status::Error(
-            StatusCode::TypeMismatch,
-            "Index on column of type " + columnTypeToString(key_type) +
-                " is not supported yet: B+ tree keys are int32"));
-    }
-
-    // Выделяем корневую страницу дерева и инициализируем её как пустой лист
+    // Выделяем корневую страницу дерева и инициализируем её как пустой лист.
+    // Раскладка листа зависит от размера ключа, поэтому инициализируем
+    // страницу тем классом, который соответствует типу колонки.
     Page root_page;
     PageId root_id = INVALID_PAGE_ID;
     Status st = page_manager_.allocate_page(root_id, root_page);
@@ -339,7 +333,11 @@ Result<IndexInfo> IndexManager::create_index(const std::string& index_name,
         return Result<IndexInfo>(st);
     }
 
-    BPlusTreePage::init_leaf_page(root_page, INVALID_PAGE_ID);
+    if (key_type == ColumnType::Int) {
+        BPlusTreePage::init_leaf_page(root_page, INVALID_PAGE_ID);
+    } else {
+        StringBPlusTreePage::init_leaf_page(root_page, INVALID_PAGE_ID);
+    }
     st = page_manager_.write_page(root_id, root_page);
     if (!st.ok()) {
         return Result<IndexInfo>(st);
@@ -385,8 +383,9 @@ Result<IndexInfo*> IndexManager::lookup(const std::string& index_name) {
     return Result<IndexInfo*>(&it->second);
 }
 
-BPlusTree IndexManager::make_tree(IndexInfo& info) {
-    BPlusTree tree(page_manager_, info.root_page_id);
+template <typename KeyT>
+BPlusTreeT<KeyT> IndexManager::make_tree(IndexInfo& info) {
+    BPlusTreeT<KeyT> tree(page_manager_, info.root_page_id);
 
     // Дерево не должно писать свой корень в 0-ю страницу метаданных:
     // там хранится только один root_page_id, и несколько индексов
@@ -412,81 +411,219 @@ Result<BPlusTree> IndexManager::get_index(const std::string& index_name) {
     if (!info_res.ok()) {
         return Result<BPlusTree>(info_res.status());
     }
-    return Result<BPlusTree>(make_tree(*info_res.value()));
+    IndexInfo& info = *info_res.value();
+
+    if (info.key_type != ColumnType::Int) {
+        return Result<BPlusTree>(Status::Error(
+            StatusCode::TypeMismatch,
+            "Index " + index_name + " has " + columnTypeToString(info.key_type) +
+                " keys, use get_string_index()"));
+    }
+    return Result<BPlusTree>(make_tree<int32_t>(info));
+}
+
+Result<StringBPlusTree> IndexManager::get_string_index(const std::string& index_name) {
+    auto info_res = lookup(index_name);
+    if (!info_res.ok()) {
+        return Result<StringBPlusTree>(info_res.status());
+    }
+    IndexInfo& info = *info_res.value();
+
+    if (info.key_type != ColumnType::String) {
+        return Result<StringBPlusTree>(Status::Error(
+            StatusCode::TypeMismatch,
+            "Index " + index_name + " has " + columnTypeToString(info.key_type) +
+                " keys, use get_index()"));
+    }
+    return Result<StringBPlusTree>(make_tree<StringKey>(info));
+}
+
+// ============================================================================
+// Преобразование значения колонки в ключ дерева
+// ============================================================================
+
+Result<int32_t> IndexManager::to_int_key(const Value& value) {
+    if (value.is_null()) {
+        return Result<int32_t>(Status::Error(StatusCode::NullConstraintViolation,
+                                             "NULL cannot be used as an index key"));
+    }
+    if (value.get_type() != ColumnType::Int) {
+        return Result<int32_t>(Status::Error(StatusCode::TypeMismatch,
+                                             "Index expects an INT key, got " +
+                                                 columnTypeToString(value.get_type())));
+    }
+    return Result<int32_t>(value.get_int());
+}
+
+Result<StringKey> IndexManager::to_string_key(const Value& value) {
+    if (value.is_null()) {
+        return Result<StringKey>(Status::Error(StatusCode::NullConstraintViolation,
+                                               "NULL cannot be used as an index key"));
+    }
+    if (value.get_type() != ColumnType::String) {
+        return Result<StringKey>(Status::Error(StatusCode::TypeMismatch,
+                                               "Index expects a STRING key, got " +
+                                                   columnTypeToString(value.get_type())));
+    }
+    return StringKey::from_string(value.get_string());
 }
 
 // ============================================================================
 // Операции над содержимым индекса
 // ============================================================================
 
-Status IndexManager::insert_entry(const std::string& index_name, int32_t key, const RecordId& rid) {
-    auto info_res = lookup(index_name);
-    if (!info_res.ok()) return info_res.status();
+Status IndexManager::sync_root(IndexInfo& info, PageId actual_root) {
+    // Обычно корень уже обновлён listener-ом дерева. Подстраховываемся
+    // на случай, когда listener по какой-то причине не сработал.
+    if (actual_root != info.root_page_id) {
+        info.root_page_id = actual_root;
+        return save();
+    }
+    return Status::OK();
+}
 
-    IndexInfo& info = *info_res.value();
-    BPlusTree tree = make_tree(info);
-
+template <typename KeyT>
+Status IndexManager::insert_typed(IndexInfo& info, const KeyT& key, const RecordId& rid) {
+    BPlusTreeT<KeyT> tree = make_tree<KeyT>(info);
     Status st = tree.insert(key, rid);
     if (!st.ok()) return st;
-
-    // Если корень сменился, listener уже обновил каталог. Подстраховываемся
-    // на случай, когда listener по какой-то причине не сработал.
-    if (tree.get_root_page_id() != info.root_page_id) {
-        info.root_page_id = tree.get_root_page_id();
-        return save();
-    }
-    return Status::OK();
+    return sync_root(info, tree.get_root_page_id());
 }
 
-Status IndexManager::remove_entry(const std::string& index_name, int32_t key) {
-    auto info_res = lookup(index_name);
-    if (!info_res.ok()) return info_res.status();
-
-    IndexInfo& info = *info_res.value();
-    BPlusTree tree = make_tree(info);
-
+template <typename KeyT>
+Status IndexManager::remove_typed(IndexInfo& info, const KeyT& key) {
+    BPlusTreeT<KeyT> tree = make_tree<KeyT>(info);
     Status st = tree.remove(key);
     if (!st.ok()) return st;
-
-    if (tree.get_root_page_id() != info.root_page_id) {
-        info.root_page_id = tree.get_root_page_id();
-        return save();
-    }
-    return Status::OK();
+    return sync_root(info, tree.get_root_page_id());
 }
 
-Status IndexManager::update_entry(const std::string& index_name, int32_t key, const RecordId& rid) {
+Status IndexManager::insert_entry(const std::string& index_name, const Value& key, const RecordId& rid) {
     auto info_res = lookup(index_name);
     if (!info_res.ok()) return info_res.status();
+    IndexInfo& info = *info_res.value();
 
-    BPlusTree tree = make_tree(*info_res.value());
-    return tree.update(key, rid);
+    if (info.key_type == ColumnType::Int) {
+        auto k = to_int_key(key);
+        if (!k.ok()) return k.status();
+        return insert_typed<int32_t>(info, k.value(), rid);
+    }
+
+    auto k = to_string_key(key);
+    if (!k.ok()) return k.status();
+    return insert_typed<StringKey>(info, k.value(), rid);
 }
 
-Result<RecordId> IndexManager::find_entry(const std::string& index_name, int32_t key) {
+Status IndexManager::remove_entry(const std::string& index_name, const Value& key) {
+    auto info_res = lookup(index_name);
+    if (!info_res.ok()) return info_res.status();
+    IndexInfo& info = *info_res.value();
+
+    if (info.key_type == ColumnType::Int) {
+        auto k = to_int_key(key);
+        if (!k.ok()) return k.status();
+        return remove_typed<int32_t>(info, k.value());
+    }
+
+    auto k = to_string_key(key);
+    if (!k.ok()) return k.status();
+    return remove_typed<StringKey>(info, k.value());
+}
+
+Status IndexManager::update_entry(const std::string& index_name, const Value& key, const RecordId& rid) {
+    auto info_res = lookup(index_name);
+    if (!info_res.ok()) return info_res.status();
+    IndexInfo& info = *info_res.value();
+
+    if (info.key_type == ColumnType::Int) {
+        auto k = to_int_key(key);
+        if (!k.ok()) return k.status();
+        return make_tree<int32_t>(info).update(k.value(), rid);
+    }
+
+    auto k = to_string_key(key);
+    if (!k.ok()) return k.status();
+    return make_tree<StringKey>(info).update(k.value(), rid);
+}
+
+Result<RecordId> IndexManager::find_entry(const std::string& index_name, const Value& key) {
     auto info_res = lookup(index_name);
     if (!info_res.ok()) return Result<RecordId>(info_res.status());
+    IndexInfo& info = *info_res.value();
 
-    BPlusTree tree = make_tree(*info_res.value());
-    return tree.search(key);
+    if (info.key_type == ColumnType::Int) {
+        auto k = to_int_key(key);
+        if (!k.ok()) return Result<RecordId>(k.status());
+        return make_tree<int32_t>(info).search(k.value());
+    }
+
+    auto k = to_string_key(key);
+    if (!k.ok()) return Result<RecordId>(k.status());
+    return make_tree<StringKey>(info).search(k.value());
 }
 
-Status IndexManager::range_scan(const std::string& index_name, int32_t low_key, int32_t high_key,
+Status IndexManager::range_scan(const std::string& index_name,
+                                const Value& low_key, const Value& high_key,
                                 std::vector<RecordId>& result) {
     auto info_res = lookup(index_name);
     if (!info_res.ok()) return info_res.status();
+    IndexInfo& info = *info_res.value();
 
-    BPlusTree tree = make_tree(*info_res.value());
-    return tree.scan_range(low_key, high_key, result);
+    if (info.key_type == ColumnType::Int) {
+        auto lo = to_int_key(low_key);
+        auto hi = to_int_key(high_key);
+        if (!lo.ok()) return lo.status();
+        if (!hi.ok()) return hi.status();
+        return make_tree<int32_t>(info).scan_range(lo.value(), hi.value(), result);
+    }
+
+    auto lo = to_string_key(low_key);
+    auto hi = to_string_key(high_key);
+    if (!lo.ok()) return lo.status();
+    if (!hi.ok()) return hi.status();
+    return make_tree<StringKey>(info).scan_range(lo.value(), hi.value(), result);
+}
+
+Status IndexManager::range_scan_half_open(const std::string& index_name,
+                                          const Value& low_key, const Value& high_key,
+                                          std::vector<RecordId>& result) {
+    auto info_res = lookup(index_name);
+    if (!info_res.ok()) return info_res.status();
+    IndexInfo& info = *info_res.value();
+
+    if (info.key_type == ColumnType::Int) {
+        auto lo = to_int_key(low_key);
+        auto hi = to_int_key(high_key);
+        if (!lo.ok()) return lo.status();
+        if (!hi.ok()) return hi.status();
+        return make_tree<int32_t>(info).scan_range_half_open(lo.value(), hi.value(), result);
+    }
+
+    auto lo = to_string_key(low_key);
+    auto hi = to_string_key(high_key);
+    if (!lo.ok()) return lo.status();
+    if (!hi.ok()) return hi.status();
+    return make_tree<StringKey>(info).scan_range_half_open(lo.value(), hi.value(), result);
 }
 
 Status IndexManager::full_scan(const std::string& index_name, std::vector<RecordId>& result) {
     auto info_res = lookup(index_name);
     if (!info_res.ok()) return info_res.status();
+    IndexInfo& info = *info_res.value();
 
-    BPlusTree tree = make_tree(*info_res.value());
     result.clear();
-    const IndexIterator stop = tree.end();
+
+    if (info.key_type == ColumnType::Int) {
+        BPlusTree tree = make_tree<int32_t>(info);
+        const IndexIterator stop = tree.end();
+        for (auto it = tree.begin(); it != stop; ++it) {
+            result.push_back((*it).second);
+        }
+        return Status::OK();
+    }
+
+    StringBPlusTree tree = make_tree<StringKey>(info);
+    const StringIndexIterator stop = tree.end();
     for (auto it = tree.begin(); it != stop; ++it) {
         result.push_back((*it).second);
     }
