@@ -4,6 +4,7 @@ add_executable(dbms_tests
     test_storage_pipeline.cpp
     test_b_plus_tree.cpp
     test_index_manager.cpp
+    test_table_indexer.cpp
 )
 
 target_link_libraries(dbms_tests PRIVATE dbms_core gtest_main)
