@@ -295,16 +295,27 @@ TEST_F(IndexCatalogPersistenceTest, DuplicateColumnIndexRejectedAndListing) {
     EXPECT_EQ(im.indexes_for_table("orders").size(), 1u);
     EXPECT_EQ(im.indexes_for_table("unknown").size(), 0u);
 
-    // Индексы по строковым колонкам пока не поддерживаются — ошибка должна быть явной
+    // Индекс по строковой колонке создаётся отдельным деревом с ключом StringKey
     auto str_index = im.create_index("idx_users_name", "users", "name", ColumnType::String);
-    EXPECT_FALSE(str_index.ok());
-    EXPECT_EQ(str_index.status().code, StatusCode::TypeMismatch);
+    ASSERT_TRUE(str_index.ok()) << str_index.status().message;
+    EXPECT_EQ(str_index.value().key_type, ColumnType::String);
+    EXPECT_EQ(im.indexes_for_table("users").size(), 3u);
+
+    // Тип ключа проверяется при выдаче дерева
+    EXPECT_FALSE(im.get_index("idx_users_name").ok());          // это не int-дерево
+    EXPECT_TRUE(im.get_string_index("idx_users_name").ok());
+    EXPECT_FALSE(im.get_string_index("idx_users_id").ok());     // это не string-дерево
+    EXPECT_TRUE(im.get_index("idx_users_id").ok());
 
     // Удаление индекса тоже должно сохраняться на диск
     ASSERT_TRUE(im.drop_index("idx_users_age").ok());
     ASSERT_TRUE(im.reload().ok());
-    EXPECT_EQ(im.size(), 2u);
+    EXPECT_EQ(im.size(), 3u);
     EXPECT_FALSE(im.has_index("idx_users_age"));
+    EXPECT_TRUE(im.has_index("idx_users_name"));
+
+    // Тип ключа должен пережить перезагрузку каталога
+    EXPECT_EQ(im.get_index_info("idx_users_name").value().key_type, ColumnType::String);
 
     pm.close();
 }
