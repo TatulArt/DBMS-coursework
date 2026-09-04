@@ -116,9 +116,6 @@ public:
     Status validate_row(const TableSchema& schema, const std::vector<Value>& fields) const;
 
 private:
-    // Значение колонки -> ключ B+ дерева
-    static Result<int32_t> to_index_key(const Value& value);
-
     // Достать записи по списку RecordId
     Result<std::vector<Record>> fetch_all(const TableSchema& schema,
                                           const std::vector<RecordId>& rids);
