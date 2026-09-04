@@ -81,12 +81,15 @@ int main() {
     const std::string db_filename = "users_data.db";
     std::remove(db_filename.c_str());
 
-    // Схема таблицы: id — INDEXED (уникален, не NULL), name — NOT_NULL, age — nullable
+    // Схема таблицы:
+    //   id   — INT INDEXED    (уникален, не NULL, индекс с ключом int32)
+    //   name — STRING INDEXED (уникален, не NULL, индекс с ключом StringKey)
+    //   age  — INT nullable   (без индекса — для сравнения с полным сканом)
     TableSchema users;
     users.table_name = "users";
     users.columns = {
         {"id",   ColumnType::Int,    /*nullable*/ false, /*indexed*/ true},
-        {"name", ColumnType::String, false, false},
+        {"name", ColumnType::String, false, true},
         {"age",  ColumnType::Int,    true,  false}
     };
 
@@ -115,10 +118,14 @@ int main() {
                   << " (корень дерева — страница " << info.root_page_id << ")\n";
     }
 
-    std::cout << "\nПараметры B+ дерева:\n"
-              << "  размер страницы .............. " << PAGE_SIZE << " байт\n"
-              << "  ключей в листе ............... " << BPlusTreePage::MAX_KEYS_LEAF << "\n"
-              << "  ключей во внутреннем узле .... " << BPlusTreePage::MAX_KEYS_INTERNAL << "\n";
+    std::cout << "\nПараметры B+ дерева (страница " << PAGE_SIZE << " байт):\n"
+              << "  ключ int32  (" << sizeof(int32_t) << " Б): лист "
+              << BPlusTreePage::MAX_KEYS_LEAF << " ключей, внутренний узел "
+              << BPlusTreePage::MAX_KEYS_INTERNAL << "\n"
+              << "  ключ строка (" << sizeof(StringKey) << " Б): лист "
+              << StringBPlusTreePage::MAX_KEYS_LEAF << " ключей, внутренний узел "
+              << StringBPlusTreePage::MAX_KEYS_INTERNAL
+              << " (до " << StringKey::MAX_LENGTH << " байт на значение)\n";
 
     // ------------------------------------------------------------------
     print_header("ЭТАП 2. Вставка данных с автоматическим обновлением индекса");
@@ -148,6 +155,10 @@ int main() {
     std::cout << "INSERT с существующим id=1        -> "
               << (dup.ok() ? "ПРИНЯТО (ошибка!)" : dup.status().message) << "\n";
 
+    auto dup_name = indexer.insert_row(users, {Value(999999), Value("user_1"), Value(30)});
+    std::cout << "INSERT с существующим name        -> "
+              << (dup_name.ok() ? "ПРИНЯТО (ошибка!)" : dup_name.status().message) << "\n";
+
     auto null_key = indexer.insert_row(users, {Value::Null(), Value("без id"), Value(30)});
     std::cout << "INSERT с NULL в INDEXED-колонке   -> "
               << (null_key.ok() ? "ПРИНЯТО (ошибка!)" : null_key.status().message) << "\n";
@@ -172,6 +183,18 @@ int main() {
     auto range = indexer.select_range(users, "id", Value(100), Value(110), /*high_inclusive*/ false);
     if (!range.ok()) return fail("диапазонная выборка", range.status());
     print_select("SELECT * FROM users WHERE id BETWEEN 100 AND 110;", users, range.value());
+
+    // Строковый индекс: точечный поиск и лексикографический диапазон
+    auto by_name = indexer.select_equal(users, "name", Value(std::string("user_2718")));
+    if (!by_name.ok()) return fail("выборка по name", by_name.status());
+    print_select("SELECT * FROM users WHERE name == \"user_2718\";", users, by_name.value());
+
+    auto name_range = indexer.select_range(users, "name",
+                                           Value(std::string("user_4990")),
+                                           Value(std::string("user_4995")), false);
+    if (!name_range.ok()) return fail("диапазон по name", name_range.status());
+    print_select("SELECT * FROM users WHERE name BETWEEN \"user_4990\" AND \"user_4995\";",
+                 users, name_range.value());
 
     std::cout << "\nВыигрыш индекса: точечный поиск прочитал "
               << by_id.value().pages_examined << " страницу данных вместо "
@@ -234,19 +257,31 @@ int main() {
     print_select("SELECT * FROM users WHERE id == 4321;  -- после перезапуска",
                  restored, restored_res.value());
 
-    // Проверяем, что индекс цел целиком, а не только в одной точке
-    auto tree = reopened_indexes.get_index(TableIndexer::index_name_for("users", "id"));
-    if (!tree.ok()) return fail("получение дерева индекса", tree.status());
+    // Проверяем, что оба индекса целы целиком, а не только в одной точке
+    auto int_tree = reopened_indexes.get_index(TableIndexer::index_name_for("users", "id"));
+    if (!int_tree.ok()) return fail("получение дерева индекса по id", int_tree.status());
 
-    Status valid = tree.value().validate();
-    std::cout << "\nСтруктурная проверка B+ дерева: "
-              << (valid.ok() ? "дерево корректно" : "ПОВРЕЖДЕНО — " + valid.message) << "\n";
+    auto str_tree = reopened_indexes.get_string_index(TableIndexer::index_name_for("users", "name"));
+    if (!str_tree.ok()) return fail("получение дерева индекса по name", str_tree.status());
 
-    size_t indexed_keys = 0;
-    for (auto it = tree.value().begin(); it != tree.value().end(); ++it) {
-        indexed_keys++;
-    }
-    std::cout << "Ключей в индексе после перезапуска: " << indexed_keys << "\n";
+    const Status int_valid = int_tree.value().validate();
+    const Status str_valid = str_tree.value().validate();
+
+    size_t int_keys = 0;
+    const IndexIterator int_stop = int_tree.value().end();
+    for (auto it = int_tree.value().begin(); it != int_stop; ++it) int_keys++;
+
+    size_t str_keys = 0;
+    const StringIndexIterator str_stop = str_tree.value().end();
+    for (auto it = str_tree.value().begin(); it != str_stop; ++it) str_keys++;
+
+    std::cout << "\nСтруктурная проверка деревьев:\n"
+              << "  индекс по id (int32):     "
+              << (int_valid.ok() ? "корректен" : "ПОВРЕЖДЁН — " + int_valid.message)
+              << ", ключей " << int_keys << "\n"
+              << "  индекс по name (строка):  "
+              << (str_valid.ok() ? "корректен" : "ПОВРЕЖДЁН — " + str_valid.message)
+              << ", ключей " << str_keys << "\n";
 
     reopened.close();
     std::cout << "\nГотово. Файл базы данных: " << db_filename << "\n";
