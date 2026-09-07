@@ -30,6 +30,7 @@ private:
     std::string file_path_;
     mutable std::fstream file_stream_;
     uint32_t num_pages_{0};
+    bool sync_on_write_{true};
 
 public:
     explicit PageManager(const std::string& file_path);
@@ -45,6 +46,27 @@ public:
 
     // Выделение новой страницы в конце файла
     Status allocate_page(PageId& new_page_id, Page& page_out);
+
+    
+    // Создает новый файл базы данных и инициализирует 0-ю страницу метаданных.
+    // @param db_path Путь к создаваемому файлу базы данных
+    Status create_database(const std::string& db_path);
+
+    // Вспомогательный метод для сброса/обновления root_page_id в метаданных
+    Status update_root_page_id(PageId new_root_id);
+
+    // Чтение/запись метаданных БД (0-я страница)
+    Result<DatabaseMetadata> read_metadata() const;
+    Status write_metadata(const DatabaseMetadata& meta);
+
+    // Принудительный сброс буферов на диск
+    Status flush();
+
+    // Режим синхронной записи: при true каждая write_page сбрасывается на диск.
+    // Выключение ускоряет массовые загрузки (данные сбрасываются в close()/flush()).
+    void set_sync_on_write(bool enabled) { sync_on_write_ = enabled; }
+    bool sync_on_write() const { return sync_on_write_; }
+
 
     // Вспомогательные методы
     uint32_t get_num_pages() const { return num_pages_; }

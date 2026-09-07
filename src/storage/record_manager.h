@@ -42,6 +42,17 @@ public:
     // Удаление записи (помечает слот как удалённый)
     Status delete_record(RecordId id);
 
+    // Перечисление всех живых записей страницы (удалённые слоты пропускаются).
+    // Нужен для полного скана таблицы и для построения индекса по колонке.
+    Result<std::vector<Record>> scan_page(PageId page_id, const std::vector<ColumnDef>& schema);
+
+    // Хватит ли на странице места под запись длиной record_size байт
+    Result<bool> page_has_space(PageId page_id, size_t needed_bytes);
+
+    // Сколько байт занимает запись после сериализации
+    static size_t record_size(const std::vector<Value>& fields,
+                              const std::vector<ColumnDef>& schema);
+
     // ------------------------------------------------------------------------
     // СЕРИАЛИЗАЦИЯИ ДЕСЕРИАЛИЗАЦИЯ (Record <-> raw bytes)
     // ------------------------------------------------------------------------

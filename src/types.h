@@ -116,12 +116,24 @@ struct Status {
     std::string error() const { return message; }
 };
 
-template<typename T>
-struct Result {
-private:
-    Status status_;
-    T value_;
-    bool hasValue_ = false;
+inline std::ostream& operator<<(std::ostream& os, const Value& val) {
+    os << val.to_string();
+    return os;
+}
+
+// ============================================================================
+// 4. ФИЗИЧЕСКАЯ ИДЕНТИФИКАЦИЯ ЗАПИСЕЙ И ЗАПИСЬ (RECORD)
+// ============================================================================
+
+using PageId = uint32_t;
+#ifndef INVALID_PAGE_ID
+constexpr PageId INVALID_PAGE_ID = 0xFFFFFFFF;
+#endif
+
+// Уникальный адрес строки внутри СУБД (Номер страницы + Индекс слота)
+struct RecordId {
+    PageId page_id{0};
+    uint16_t slot_id{0};
 
 public:
     Result() : status_(Status::OK()), hasValue_(false) {}
@@ -143,9 +155,27 @@ struct Record {
     std::vector<Value> fields;
 };
 
+// ============================================================================
+// 6. МЕТАДАННЫЕ БАЗЫ ДАННЫХ И СТРАНИЦЫ (DATABASE METADATA)
+// ============================================================================
+
+constexpr PageId METADATA_PAGE_ID = 0;
+constexpr uint32_t DB_MAGIC_NUMBER = 0xBEEFCAFE;
+
+#pragma pack(push, 1)
+struct DatabaseMetadata {
+    uint32_t magic_number;
+    PageId root_page_id;          // Корень «главного» дерева файла
+    PageId index_catalog_page_id; // Начало цепочки страниц каталога индексов
+};
+#pragma pack(pop)
+
+
 // ============================================================
-// 6. ДЛЯ СОВМЕСТИМОСТИ СО STORAGE
+// 7. ДЛЯ СОВМЕСТИМОСТИ СО STORAGE
 // ============================================================
 
 // Функция-заглушка для Value::Null()
 inline Value Value_Null() { return std::nullopt; }
+
+#endif // TYPES_H
