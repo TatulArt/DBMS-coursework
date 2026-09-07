@@ -13,7 +13,6 @@
 #include <iostream>
 #include <string>
 #include <vector>
-
 #include <nlohmann/json.hpp>
 
 #include "./index/index_manager.h"
