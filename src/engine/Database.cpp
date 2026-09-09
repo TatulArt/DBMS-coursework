@@ -81,8 +81,10 @@ void Database::loadTables() {
 
             std::string mod;
             while (ss >> mod) {
-                if (mod == "INDEXED")
+                if (mod == "INDEXED"){
                     col.indexed = true;
+                    col.is_indexed = true;
+                }
                 else if (mod == "NOT NULL")
                     col.notNull = true;
                 else if (mod == "DEFAULT") {

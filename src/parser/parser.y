@@ -75,7 +75,7 @@
 %type <std::vector<std::unique_ptr<ASTNode>>> value_list
 %type <std::vector<ColumnSpec>> column_definitions
 %type <ColumnSpec> column_definition
-%type <ColType> type_spec
+%type <ColumnType> type_spec 
 %type <bool> not_null_opt indexed_opt
 %type <Value> default_opt
 
@@ -412,13 +412,18 @@ column_definition:
         col.notNull = $3;
         col.indexed = $4;
         col.defaultValue = $5;
+        
+        // Переходные флаги для table_indexer
+        col.is_indexed = $4;
+        col.is_nullable = !$3;
+        
         $$ = std::move(col);
     }
 ;
 
 type_spec:
-    INT_TYPE    { $$ = ColType::INT; }
-    | STRING_TYPE { $$ = ColType::STRING; }
+    INT_TYPE      { $$ = ColumnType::INT; }
+    | STRING_TYPE { $$ = ColumnType::STRING; }
 ;
 
 not_null_opt:

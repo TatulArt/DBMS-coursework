@@ -166,11 +166,14 @@ public:
 
 struct ColumnSpec {
     std::string name;
-    ColType type;
+    ColumnType type;
     bool notNull = false;
     bool indexed = false;
     Value defaultValue;
+    bool is_nullable = true;
+    bool is_indexed = false;
 };
+
 
 class CreateTableQuery : public ASTNode {
 public:

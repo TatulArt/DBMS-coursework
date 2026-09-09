@@ -6,6 +6,7 @@
 #include <variant>
 #include <string>
 #include <iostream>
+#include "utils/Error.h"
 
 // ============================================================
 // 1. ТИПЫ ДЛЯ ХРАНЕНИЯ НА ДИСКЕ
@@ -13,96 +14,174 @@
 
 using PageId = uint32_t;
 
+#ifndef INVALID_PAGE_ID
+constexpr PageId INVALID_PAGE_ID = 0xFFFFFFFF;
+#endif
+
 struct RecordID {
-    PageId page_id;
-    uint16_t slot_id;
+    PageId page_id{0};
+    uint16_t slot_id{0};
 };
 
-// Алиас для совместимости
 using RecordId = RecordID;
 
 // ============================================================
-// 2. ТИПЫ ДЛЯ ДАННЫХ (Value и ColumnDef)
+// 2. ТИПЫ ДЛЯ ДАННЫХ (Идеальный мост-адаптер)
 // ============================================================
 
-enum class ColType { INT, STRING };
+enum class ColType { 
+    INT, 
+    STRING,
+    Int = INT,       
+    String = STRING  
+};
 
-// Алиас для совместимости со storage
-using ColumnType = ColType;
+using ColumnType = ColType; 
 
-// Основной тип значения: NULL, int или string
-using Value = std::optional<std::variant<int, std::string>>;
+// Делаем класс Value наследником std::optional
+class Value : public std::optional<std::variant<int, std::string>> {
+public:
+    using std::optional<std::variant<int, std::string>>::optional;
+    using std::optional<std::variant<int, std::string>>::operator=;
 
-// Вспомогательные функции для работы с Value
-namespace val {
-    // camelCase (основные)
-    inline bool isNull(const Value& v) { return !v.has_value(); }
-    inline bool isInt(const Value& v) { return v.has_value() && std::holds_alternative<int>(*v); }
-    inline bool isString(const Value& v) { return v.has_value() && std::holds_alternative<std::string>(*v); }
+    Value(const char* val) : std::optional<std::variant<int, std::string>>(std::string(val)) {}
+    static Value Null() { return Value(); }
+    // Методы, которые ищут table_indexer.cpp и index_manager.cpp
+    bool is_null() const { return !this->has_value(); }
+    bool is_int() const { return this->has_value() && std::holds_alternative<int>(**this); }
+    bool is_string() const { return this->has_value() && std::holds_alternative<std::string>(**this); }
 
-    inline int getInt(const Value& v) { return std::get<int>(*v); }
-    inline const std::string& getString(const Value& v) { return std::get<std::string>(*v); }
-    
-    // snake_case (для совместимости со storage)
-    inline bool is_null(const Value& v) { return isNull(v); }
-    inline int get_int(const Value& v) { return getInt(v); }
-    inline const std::string& get_string(const Value& v) { return getString(v); }
-    
-    // Для совместимости
-    inline Value Null() { return std::nullopt; }
-    
-    inline std::string to_string(const Value& v) {
-        if (isNull(v)) return "NULL";
-        if (isInt(v)) return std::to_string(getInt(v));
-        if (isString(v)) return getString(v);
-        return "?";
+    int get_int() const { 
+        if (!is_int()) throw TypeError("Value is not an INT");
+        return std::get<int>(**this); 
     }
+    
+    const std::string& get_string() const { 
+        if (!is_string()) throw TypeError("Value is not a STRING");
+        return std::get<std::string>(**this); 
+    }
+
+    ColumnType get_type() const {
+        if (is_int()) return ColumnType::INT;
+        return ColumnType::STRING;
+    }
+
+    std::string to_string() const {
+        if (is_null()) return "NULL";
+        if (is_int()) return std::to_string(get_int());
+        return get_string();
+    }
+
+    friend bool operator==(const Value& lhs, const Value& rhs) {
+        if (lhs.is_null() && rhs.is_null()) return true;
+        if (lhs.is_null() || rhs.is_null()) return false;
+        if (lhs.is_int() && rhs.is_int()) return lhs.get_int() == rhs.get_int();
+        if (lhs.is_string() && rhs.is_string()) return lhs.get_string() == rhs.get_string();
+        return false;
+    }
+
+    friend bool operator!=(const Value& lhs, const Value& rhs) {
+        return !(lhs == rhs);
+    }
+
+    friend bool operator<(const Value& lhs, const Value& rhs) {
+        if (lhs.is_null() || rhs.is_null()) return false;
+        if (lhs.is_int() && rhs.is_int()) return lhs.get_int() < rhs.get_int();
+        if (lhs.is_string() && rhs.is_string()) return lhs.get_string() < rhs.get_string();
+        return false;
+    }
+
+    friend bool operator<=(const Value& lhs, const Value& rhs) {
+        return (lhs < rhs) || (lhs == rhs);
+    }
+
+    friend bool operator>(const Value& lhs, const Value& rhs) {
+        return rhs < lhs;
+    }
+
+    friend bool operator>=(const Value& lhs, const Value& rhs) {
+        return (rhs < lhs) || (lhs == rhs);
+    }
+};
+
+
+namespace val {
+    inline bool isNull(const Value& v) { return v.is_null(); }
+    inline bool isInt(const Value& v) { return v.is_int(); }
+    inline bool isString(const Value& v) { return v.is_string(); }
+
+    inline int getInt(const Value& v) { return v.get_int(); }
+    inline const std::string& getString(const Value& v) { return v.get_string(); }
+    
+    inline bool is_null(const Value& v) { return v.is_null(); }
+    inline int get_int(const Value& v) { return v.get_int(); }
+    inline const std::string& get_string(const Value& v) { return v.get_string(); }
+    
+    inline Value Null() { return Value(); }
+    
+    inline std::string to_string(const Value& v) { return v.to_string(); }
 }
 
-// Сравнение двух Value (для WHERE)
+inline std::string columnTypeToString(ColType type) {
+    return (type == ColType::INT) ? "INT" : "STRING";
+}
+
+// Сравнения объектов Value
 inline bool valueLess(const Value& a, const Value& b) {
-    if (!a || !b) return false;
-    if (val::isInt(a) && val::isInt(b)) return val::getInt(a) < val::getInt(b);
-    if (val::isString(a) && val::isString(b)) return val::getString(a) < val::getString(b);
+    if (a.is_null() || b.is_null()) return false;
+    if (a.is_int() && b.is_int()) return a.get_int() < b.get_int();
+    if (a.is_string() && b.is_string()) return a.get_string() < b.get_string();
     return false;
 }
 
 inline bool valueEqual(const Value& a, const Value& b) {
-    if (!a && !b) return true;
-    if (!a || !b) return false;
-    return *a == *b;
+    if (a.is_null() && b.is_null()) return true;
+    if (a.is_null() || b.is_null()) return false;
+    if (a.is_int() && b.is_int()) return a.get_int() == b.get_int();
+    if (a.is_string() && b.is_string()) return a.get_string() == b.get_string();
+    return false;
 }
 
-// Оператор вывода для Value
 inline std::ostream& operator<<(std::ostream& os, const Value& v) {
-    os << val::to_string(v);
+    os << v.to_string();
     return os;
 }
 
 // ============================================================
-// 3. ОПРЕДЕЛЕНИЕ КОЛОНКИ
+// 3. ОПРЕДЕЛЕНИЕ СТРУКТУР СУБД
 // ============================================================
 
 struct ColumnDef {
     std::string name;
     ColType type;
     bool notNull = false;
-    bool indexed = false;
+    bool indexed = false;     
     Value defaultValue;
-    bool is_nullable = true;  // для совместимости со storage
+    
+    bool is_nullable = true;  
+    bool is_indexed = false; 
+
+    // Метод для моментальной синхронизации двух флагов, чтобы не путаться
+    void sync_flags() {
+        if (indexed) is_indexed = true;
+        if (is_indexed) indexed = true;
+    }
+};
+
+
+
+struct Record {
+    RecordID id;
+    std::vector<Value> fields;
 };
 
 // ============================================================
-// 4. СТАТУСЫ И РЕЗУЛЬТАТЫ
+// 4. СТАТУСЫ И ШАБЛОН РЕЗУЛЬТАТА (Result)
 // ============================================================
 
 enum class StatusCode {
-    OK,
-    IOError,
-    InvalidArgument,
-    NotFound,
-    CorruptedData,
-    RecordNotFound
+    OK, IOError, InvalidArgument, NotFound, CorruptedData, RecordNotFound,
+    UniqueConstraintViolation, NullConstraintViolation, TypeMismatch, ColumnNotFound = NotFound
 };
 
 struct Status {
@@ -116,47 +195,26 @@ struct Status {
     std::string error() const { return message; }
 };
 
-inline std::ostream& operator<<(std::ostream& os, const Value& val) {
-    os << val.to_string();
-    return os;
-}
-
-// ============================================================================
-// 4. ФИЗИЧЕСКАЯ ИДЕНТИФИКАЦИЯ ЗАПИСЕЙ И ЗАПИСЬ (RECORD)
-// ============================================================================
-
-using PageId = uint32_t;
-#ifndef INVALID_PAGE_ID
-constexpr PageId INVALID_PAGE_ID = 0xFFFFFFFF;
-#endif
-
-// Уникальный адрес строки внутри СУБД (Номер страницы + Индекс слота)
-struct RecordId {
-    PageId page_id{0};
-    uint16_t slot_id{0};
+template <typename T>
+class Result {
+private:
+    Status status_;
+    std::optional<T> value_;
 
 public:
-    Result() : status_(Status::OK()), hasValue_(false) {}
-    Result(const T& v) : status_(Status::OK()), value_(v), hasValue_(true) {}
-    Result(Status s) : status_(s), hasValue_(false) {}
+    Result() : status_(Status::OK()), value_(std::nullopt) {}
+    Result(const T& v) : status_(Status::OK()), value_(v) {}
+    Result(Status s) : status_(s), value_(std::nullopt) {}
 
     bool ok() const { return status_.ok(); }
     const Status& status() const { return status_; }
-    const T& value() const { return value_; }
-    T& value() { return value_; }
-};
-
-// ============================================================
-// 5. ЗАПИСЬ
-// ============================================================
-
-struct Record {
-    RecordID id;
-    std::vector<Value> fields;
+    
+    const T& value() const { return *value_; }
+    T& value() { return *value_; }
 };
 
 // ============================================================================
-// 6. МЕТАДАННЫЕ БАЗЫ ДАННЫХ И СТРАНИЦЫ (DATABASE METADATA)
+// 5. МЕТАДАННЫЕ БАЗЫ ДАННЫХ
 // ============================================================================
 
 constexpr PageId METADATA_PAGE_ID = 0;
@@ -165,17 +223,9 @@ constexpr uint32_t DB_MAGIC_NUMBER = 0xBEEFCAFE;
 #pragma pack(push, 1)
 struct DatabaseMetadata {
     uint32_t magic_number;
-    PageId root_page_id;          // Корень «главного» дерева файла
-    PageId index_catalog_page_id; // Начало цепочки страниц каталога индексов
+    PageId root_page_id;          
+    PageId index_catalog_page_id; 
 };
 #pragma pack(pop)
 
-
-// ============================================================
-// 7. ДЛЯ СОВМЕСТИМОСТИ СО STORAGE
-// ============================================================
-
-// Функция-заглушка для Value::Null()
-inline Value Value_Null() { return std::nullopt; }
-
-#endif // TYPES_H
+inline Value Value_Null() { return Value(); }

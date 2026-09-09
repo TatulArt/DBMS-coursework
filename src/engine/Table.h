@@ -5,7 +5,7 @@
 #include <memory>
 #include <string>
 #include "Schema.h"
-#include "index/include/IndexManager.h"
+#include "index/index_manager.h"
 #include "storage/page_manager.h" 
 #include "storage/record_manager.h"
 
@@ -34,12 +34,14 @@ public:
     void remove(RecordID rid);
     std::vector<Value> fetch(RecordID rid);
 
+    ~Table();
+
 private:
     Schema schema_;
     std::string dbPath_;
     std::unique_ptr<PageManager> pageManager_;
     std::unique_ptr<RecordManager> recordManager_;
-    std::unique_ptr<IndexManager> indexManager_; // nullptr если нет INDEXED колонки
+    std::unique_ptr<IndexManager> indexManager_;
 };
 
 
