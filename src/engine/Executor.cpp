@@ -128,9 +128,9 @@ QueryResult Executor::execInsert(const InsertQuery& q) {
             if (!(record[i]).is_null()) continue;
 
             const auto& col = schema.columns[i];
-            if (col.defaultValue.has_value()) {
-                record[i] = col.defaultValue.value();
-            } else if (col.notNull) {
+            if (!col.default_value.is_null()) {
+                record[i] = col.default_value;
+            } else if (!col.is_nullable) {
                 // Возвращаем красивую ошибку в консоль вместо аварийного падения!
                 return {false, "Constraint Violation: Column '" + col.name + "' cannot be NULL", {}, affected};
             }
@@ -140,9 +140,9 @@ QueryResult Executor::execInsert(const InsertQuery& q) {
         // Итерируемся по колонкам и ищем, нет ли дубликатов в B+ дереве твоего товарища
         try {
             // Если у таблицы инициализирован indexManager_, проверяем уникальность по B+ дереву
-            // (Поскольку у нас в types.h прописано ColumnDef::indexed, проверяем флаг)
+            // (в types.h флаг называется ColumnDef::is_indexed)
             for (size_t i = 0; i < schema.columns.size(); ++i) {
-                if (schema.columns[i].indexed) {
+                if (schema.columns[i].is_indexed) {
                     std::string idxName = "idx_" + q.tableName + "_" + schema.columns[i].name;
                     
                     // Делаем пробный поиск по индексу. Если ключ найден — это дубликат!
@@ -428,7 +428,9 @@ bool Executor::matches(const std::vector<Value>& record, const Schema& schema,
             if ((low).is_null() || (val).is_null() || (high).is_null())
                 return false;
 
-            return val >= low && val <= high;
+            // По заданию BETWEEN задаёт полуоткрытый интервал [low, high):
+            // верхняя граница не включается.
+            return val >= low && val < high;
         }
         case NodeKind::LIKE_OP: {
             auto* n = dynamic_cast<const LikeOp*>(where);

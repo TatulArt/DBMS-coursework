@@ -1,5 +1,6 @@
 # Сборка
 build/
+data/
 build-*/
 cmake-build-*/
 bin/

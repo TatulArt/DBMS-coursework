@@ -1,8 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 
-# Поиск необходимых пакетов Flex и Bison в системе
-find_package(FLEX REQUIRED)
-find_package(BISON REQUIRED)
+# Flex и Bison уже найдены в корневом CMakeLists.txt. Повторный find_package
+# здесь перетирал BISON_EXECUTABLE пустым значением из кэша.
 
 # Интеграция генерации Flex и Bison (файлы создаются в бинарной директории)
 BISON_TARGET(SqlParser parser/parser.y ${CMAKE_CURRENT_BINARY_DIR}/parser.tab.cpp)

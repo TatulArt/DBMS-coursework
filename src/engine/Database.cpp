@@ -81,21 +81,35 @@ void Database::loadTables() {
 
             std::string mod;
             while (ss >> mod) {
-                if (mod == "INDEXED"){
-                    col.indexed = true;
+                if (mod == "INDEXED")
                     col.is_indexed = true;
-                }
-                else if (mod == "NOT NULL")
+                else if (mod == "NOT_NULL")
                     col.is_nullable = false;
                 else if (mod == "DEFAULT") {
                     std::string val;
                     ss >> val;
+
                     if (col.type == ColumnType::Int) {
-                        col.default_value = Value(std::stoi(val));
+                        try {
+                            col.default_value = Value(std::stoi(val));
+                        } catch (const std::exception&) {
+                            col.default_value = Value::Null();  // повреждённое значение игнорируем
+                        }
                     } else {
-                        // убираем кавычки если есть
-                        if (!val.empty() && val.front() == '"')
-                            val = val.substr(1, val.size() - 2);
+                        // Строка записана в кавычках и может содержать пробелы,
+                        // поэтому ss >> val даёт только первое слово: дочитываем
+                        // остаток до закрывающей кавычки.
+                        if (!val.empty() && val.front() == '"') {
+                            val.erase(0, 1);
+                            while (val.empty() || val.back() != '"') {
+                                std::string next;
+                                if (!(ss >> next)) break;
+                                val += " " + next;
+                            }
+                            if (!val.empty() && val.back() == '"') {
+                                val.pop_back();
+                            }
+                        }
                         col.default_value = Value(val);
                     }
                 }
@@ -125,7 +139,7 @@ void Database::saveSchema() {
             if (col.is_indexed)
                 f << " INDEXED";
             if (!col.is_nullable)
-                f << " NOT NULL";
+                f << " NOT_NULL";
             if (!col.default_value.is_null()) {
                 f << " DEFAULT ";
                 if ((!(col.default_value).is_null() && (col.default_value).get_type() == ColumnType::Int))

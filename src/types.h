@@ -13,12 +13,24 @@
 #include "utils/Error.h"
 
 // ============================================================================
-// 1. СТАТУСЫ И ОШИБКИ (STATUS SYSTEM)
+// 1. БАЗОВЫЕ ТИПЫ И ОШИБКИ
 // ============================================================================
+
+// Номер страницы в файле БД. Объявляется первым: на него опираются
+// INVALID_PAGE_ID, RecordID, METADATA_PAGE_ID и DatabaseMetadata ниже.
+using PageId = uint32_t;
 
 #ifndef INVALID_PAGE_ID
 constexpr PageId INVALID_PAGE_ID = 0xFFFFFFFF;
 #endif
+
+// Ошибка обращения к значению не того типа. Раньше объявлялась в
+// utils/Error.h, сейчас её там нет, а Value::get_int() и get_string()
+// её бросают — поэтому объявление живёт здесь.
+class TypeError : public std::runtime_error {
+public:
+    explicit TypeError(const std::string& message) : std::runtime_error(message) {}
+};
 
 struct RecordID {
     PageId page_id{0};
@@ -74,36 +86,34 @@ public:
         return get_string();
     }
 
+    // NULL меньше любого значения, а сравнение значений разных типов —
+    // семантическая ошибка: DBMS_Engine ловит её и показывает пользователю,
+    // как требует задание. Тот же контракт проверяет tests/test_types.cpp.
     friend bool operator==(const Value& lhs, const Value& rhs) {
         if (lhs.is_null() && rhs.is_null()) return true;
         if (lhs.is_null() || rhs.is_null()) return false;
-        if (lhs.is_int() && rhs.is_int()) return lhs.get_int() == rhs.get_int();
-        if (lhs.is_string() && rhs.is_string()) return lhs.get_string() == rhs.get_string();
-        return false;
+        if (lhs.is_int() != rhs.is_int()) {
+            throw TypeError("Type mismatch in comparison: cannot compare different column types");
+        }
+        return lhs.is_int() ? lhs.get_int() == rhs.get_int()
+                            : lhs.get_string() == rhs.get_string();
     }
 
-    friend bool operator!=(const Value& lhs, const Value& rhs) {
-        return !(lhs == rhs);
-    }
+    friend bool operator!=(const Value& lhs, const Value& rhs) { return !(lhs == rhs); }
 
     friend bool operator<(const Value& lhs, const Value& rhs) {
-        if (lhs.is_null() || rhs.is_null()) return false;
-        if (lhs.is_int() && rhs.is_int()) return lhs.get_int() < rhs.get_int();
-        if (lhs.is_string() && rhs.is_string()) return lhs.get_string() < rhs.get_string();
-        return false;
+        if (lhs.is_null() && !rhs.is_null()) return true;
+        if (rhs.is_null()) return false;   // включая случай "оба NULL"
+        if (lhs.is_int() != rhs.is_int()) {
+            throw TypeError("Type mismatch in comparison: cannot compare different column types");
+        }
+        return lhs.is_int() ? lhs.get_int() < rhs.get_int()
+                            : lhs.get_string() < rhs.get_string();
     }
 
-    friend bool operator<=(const Value& lhs, const Value& rhs) {
-        return (lhs < rhs) || (lhs == rhs);
-    }
-
-    friend bool operator>(const Value& lhs, const Value& rhs) {
-        return rhs < lhs;
-    }
-
-    friend bool operator>=(const Value& lhs, const Value& rhs) {
-        return (rhs < lhs) || (lhs == rhs);
-    }
+    friend bool operator<=(const Value& lhs, const Value& rhs) { return (lhs < rhs) || (lhs == rhs); }
+    friend bool operator>(const Value& lhs, const Value& rhs)  { return !(lhs <= rhs); }
+    friend bool operator>=(const Value& lhs, const Value& rhs) { return !(lhs < rhs); }
 };
 
 
@@ -155,19 +165,15 @@ inline std::ostream& operator<<(std::ostream& os, const Value& v) {
 
 struct ColumnDef {
     std::string name;
-    ColType type;
-    bool notNull = false;
-    bool indexed = false;     
-    Value defaultValue;
-    
-    bool is_nullable = true;  
-    bool is_indexed = false; 
+    ColType type{ColType::INT};
 
-    // Метод для моментальной синхронизации двух флагов, чтобы не путаться
-    void sync_flags() {
-        if (indexed) is_indexed = true;
-        if (is_indexed) indexed = true;
-    }
+    // Ровно по одному полю на свойство. Раньше здесь было три пары имён
+    // (indexed/is_indexed, notNull/is_nullable, defaultValue/default_value)
+    // с раздельным хранением: запись шла в одно имя, чтение из другого,
+    // и признак молча терялся.
+    bool is_nullable{true};
+    bool is_indexed{false};
+    Value default_value;
 };
 
 
@@ -186,113 +192,15 @@ enum class StatusCode {
     UniqueConstraintViolation, NullConstraintViolation, TypeMismatch, ColumnNotFound = NotFound
 };
 
-enum class ColumnType {
-    Int,
-    String
-};
+// Результат операции: код и человекочитаемое описание.
+struct Status {
+    StatusCode code{StatusCode::OK};
+    std::string message;
 
-inline std::string columnTypeToString(ColumnType type) {
-    switch (type) {
-        case ColumnType::Int: return "INT";
-        case ColumnType::String: return "STRING";
-    }
-    return "UNKNOWN";
-}
+    static Status OK() { return Status{StatusCode::OK, ""}; }
+    static Status Error(StatusCode code, const std::string& message) { return Status{code, message}; }
 
-// ============================================================================
-// 3. КЛАСС VALUE (std::variant wrapper)
-// ============================================================================
-
-// std::monostate представляет NULL в SQL
-using RawValue = std::variant<std::monostate, int32_t, std::string>;
-
-class Value {
-public:
-    RawValue data;
-
-    // Конструкторы
-    Value() : data(std::monostate{}) {}                             // NULL value
-    Value(int32_t val) : data(val) {}                               // INT
-    Value(const std::string& val) : data(val) {}                    // STRING
-    Value(const char* val) : data(std::string(val)) {}              // C-string -> STRING
-
-    // Фабричный метод для явного NULL
-    static Value Null() {
-        return Value();
-    }
-
-    // Проверки типа
-    bool is_null() const {
-        return std::holds_alternative<std::monostate>(data);
-    }
-
-    ColumnType get_type() const {
-        if (std::holds_alternative<int32_t>(data)) return ColumnType::Int;
-        if (std::holds_alternative<std::string>(data)) return ColumnType::String;
-        throw TypeError("Cannot retrieve ColumnType for a NULL Value");
-    }
-
-    // Извлечение значений
-    int32_t get_int() const {
-        if (!std::holds_alternative<int32_t>(data)) {
-            throw TypeError("Value is not an INT");
-        }
-        return std::get<int32_t>(data);
-    }
-
-    const std::string& get_string() const {
-        if (!std::holds_alternative<std::string>(data)) {
-            throw TypeError("Value is not a STRING");
-        }
-        return std::get<std::string>(data);
-    }
-
-    // Преобразование в строку для вывода
-    std::string to_string() const {
-        if (is_null()) return "NULL";
-        if (std::holds_alternative<int32_t>(data)) {
-            return std::to_string(std::get<int32_t>(data));
-        }
-        return std::get<std::string>(data);
-    }
-
-    // Логика сравнения
-    bool operator==(const Value& other) const {
-        if (is_null() && other.is_null()) return true;
-        if (is_null() || other.is_null()) return false;
-        
-        if (data.index() != other.data.index()) {
-            throw TypeError("Type mismatch in comparison: cannot compare different column types");
-        }
-        return data == other.data;
-    }
-
-    bool operator!=(const Value& other) const {
-        return !(*this == other);
-    }
-
-    bool operator<(const Value& other) const {
-        if (is_null() && !other.is_null()) return true;
-        if (!is_null() && other.is_null()) return false;
-        if (is_null() && other.is_null()) return false;
-
-        if (data.index() != other.data.index()) {
-            throw TypeError("Type mismatch in comparison: cannot compare different column types");
-        }
-        return data < other.data;
-    }
-
-    bool operator<=(const Value& other) const {
-        return (*this < other) || (*this == other);
-    }
-
-    bool operator>(const Value& other) const {
-        return !(*this <= other);
-    }
-
-    bool operator>=(const Value& other) const {
-        return !(*this < other);
-    }
+    bool ok() const { return code == StatusCode::OK; }
 };
 
 template <typename T>
@@ -329,3 +237,5 @@ struct DatabaseMetadata {
 #pragma pack(pop)
 
 inline Value Value_Null() { return Value(); }
+
+#endif // TYPES_H

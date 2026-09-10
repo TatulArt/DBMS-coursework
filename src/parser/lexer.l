@@ -34,6 +34,7 @@ int process_keyword_or_ident(const std::string& text, yy::parser::semantic_type*
         {"BETWEEN", yy::parser::token::BETWEEN},
         {"LIKE", yy::parser::token::LIKE},
         {"NOT", yy::parser::token::NOT},
+        {"NOT_NULL", yy::parser::token::NOT_NULL},
         {"NULL", yy::parser::token::NULL_},
         {"INDEXED", yy::parser::token::INDEXED},
         {"SUM", yy::parser::token::SUM},

@@ -39,7 +39,7 @@
 %token SELECT INSERT UPDATE DELETE
 %token CREATE DROP USE DATABASE TABLE
 %token FROM WHERE SET VALUE INTO AS
-%token AND OR BETWEEN LIKE NOT NULL_
+%token AND OR BETWEEN LIKE NOT NULL_ NOT_NULL
 %token INDEXED SUM COUNT AVG DEFAULT
 %token REVERT
 %token EQ NE LE GE LT GT ASSIGN
@@ -273,16 +273,13 @@ expr:
 literal:
     INTEGER  { 
         int val = $1;
-        std::cout << "DEBUG parser: INTEGER = " << val << std::endl;
         $$ = std::make_unique<Literal>(val);
     }
     | STRING { 
         std::string val = $1;
-        std::cout << "DEBUG parser: STRING = " << val << std::endl;
         $$ = std::make_unique<Literal>(val);
     }
     | NULL_  { 
-        std::cout << "DEBUG parser: NULL" << std::endl;
         $$ = std::make_unique<Literal>(std::nullopt);
     }
 ;
@@ -428,7 +425,8 @@ type_spec:
 
 not_null_opt:
     /* empty */     { $$ = false; }
-    | NOT NULL_     { $$ = true; }
+    | NOT_NULL      { $$ = true; }   /* написание из задания */
+    | NOT NULL_     { $$ = true; }   /* привычное SQL-написание */
 ;
 
 indexed_opt:
