@@ -61,15 +61,14 @@ public:
     explicit Literal(Value v) : ASTNode(NodeKind::LITERAL), value(std::move(v)) {}
     explicit Literal(int v) : ASTNode(NodeKind::LITERAL), value(v) {}
     explicit Literal(const std::string& v) : ASTNode(NodeKind::LITERAL), value(v) {}
-    explicit Literal(std::nullopt_t) : ASTNode(NodeKind::LITERAL), value(std::nullopt) {}
     
     [[nodiscard]] std::string toString() const override;
 
-    bool isNull() const { return val::isNull(value); }
-    bool isInt() const { return val::isInt(value); }
-    bool isString() const { return val::isString(value); }
-    int asInt() const { return val::getInt(value); }
-    const std::string& asString() const { return val::getString(value); }
+    bool isNull() const { return (value).is_null(); }
+    bool isInt() const { return (!(value).is_null() && (value).get_type() == ColumnType::Int); }
+    bool isString() const { return (!(value).is_null() && (value).get_type() == ColumnType::String); }
+    int asInt() const { return (value).get_int(); }
+    const std::string& asString() const { return (value).get_string(); }
 };
 
 // Операторы
@@ -166,7 +165,7 @@ public:
 
 struct ColumnSpec {
     std::string name;
-    ColType type;
+    ColumnType type;
     bool notNull = false;
     bool indexed = false;
     Value defaultValue;

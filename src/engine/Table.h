@@ -5,7 +5,7 @@
 #include <memory>
 #include <string>
 #include "Schema.h"
-#include "index/include/IndexManager.h"
+#include "index/index_manager.h"
 #include "storage/page_manager.h" 
 #include "storage/record_manager.h"
 
@@ -24,22 +24,24 @@ public:
     [[nodiscard]] const Schema& schema() const { return schema_; }
 
     // DML (data manipulation language)
-    RecordID insert(const std::vector<Value>& record);
+    RecordId insert(const std::vector<Value>& record);
 
-    void scan(std::function<void(RecordID, const std::vector<Value>&)> cb) const;
+    void scan(std::function<void(RecordId, const std::vector<Value>&)> cb) const;
 
-    // Поиск по индексу — вернёт RecordID или бросит если нет индекса
-    RecordID findByIndex(const std::string& colName, const Value& key);
-    void update(RecordID rid, const std::vector<Value>& newRecord);
-    void remove(RecordID rid);
-    std::vector<Value> fetch(RecordID rid);
+    // Поиск по индексу — вернёт RecordId или бросит если нет индекса
+    RecordId findByIndex(const std::string& colName, const Value& key);
+    void update(RecordId rid, const std::vector<Value>& newRecord);
+    void remove(RecordId rid);
+    std::vector<Value> fetch(RecordId rid);
 
 private:
     Schema schema_;
     std::string dbPath_;
     std::unique_ptr<PageManager> pageManager_;
     std::unique_ptr<RecordManager> recordManager_;
-    std::unique_ptr<IndexManager> indexManager_; // nullptr если нет INDEXED колонки
+    // Каталог индексов таблицы (наша реализация на B+ дереве).
+    // nullptr, пока в схеме нет колонок с модификатором INDEXED.
+    std::unique_ptr<IndexManager> indexManager_;
 };
 
 

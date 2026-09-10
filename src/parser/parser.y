@@ -75,7 +75,7 @@
 %type <std::vector<std::unique_ptr<ASTNode>>> value_list
 %type <std::vector<ColumnSpec>> column_definitions
 %type <ColumnSpec> column_definition
-%type <ColType> type_spec
+%type <ColumnType> type_spec
 %type <bool> not_null_opt indexed_opt
 %type <Value> default_opt
 
@@ -283,7 +283,7 @@ literal:
     }
     | NULL_  { 
         std::cout << "DEBUG parser: NULL" << std::endl;
-        $$ = std::make_unique<Literal>(std::nullopt);
+        $$ = std::make_unique<Literal>(Value::Null());
     }
 ;
 
@@ -417,8 +417,8 @@ column_definition:
 ;
 
 type_spec:
-    INT_TYPE    { $$ = ColType::INT; }
-    | STRING_TYPE { $$ = ColType::STRING; }
+    INT_TYPE    { $$ = ColumnType::Int; }
+    | STRING_TYPE { $$ = ColumnType::String; }
 ;
 
 not_null_opt:

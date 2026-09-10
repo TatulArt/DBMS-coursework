@@ -18,7 +18,7 @@ std::vector<uint8_t> RecordManager::serialize_record(const std::vector<Value>& f
 
     // 1. Формируем NULL-битмаску
     for (size_t i = 0; i < fields.size(); ++i) {
-        if (val::is_null(fields[i])) {
+        if (fields[i].is_null()) {
             null_bitmap[i / 8] |= (1 << (i % 8)); // Ставим 1, если NULL
         }
     }
@@ -28,16 +28,16 @@ std::vector<uint8_t> RecordManager::serialize_record(const std::vector<Value>& f
 
     // 2. Сериализуем сами значения
     for (size_t i = 0; i < fields.size(); ++i) {
-        if (val::is_null(fields[i])) continue; // Пропускаем тела NULL-полей
+        if (fields[i].is_null()) continue; // Пропускаем тела NULL-полей
 
-        if (schema[i].type == ColType::INT) {
-            int32_t val = val::get_int(fields[i]);
+        if (schema[i].type == ColumnType::Int) {
+            int32_t val = fields[i].get_int();
             uint8_t bytes[sizeof(int32_t)];
             std::memcpy(bytes, &val, sizeof(int32_t));
             buffer.insert(buffer.end(), bytes, bytes + sizeof(int32_t));
         } 
-        else if (schema[i].type == ColType::STRING) {
-            const std::string& str = val::get_string(fields[i]);
+        else if (schema[i].type == ColumnType::String) {
+            const std::string& str = fields[i].get_string();
             uint16_t len = static_cast<uint16_t>(str.size());
             
             // Записываем 2 байта длины
@@ -73,11 +73,11 @@ Result<std::vector<Value>> RecordManager::deserialize_record(const uint8_t* data
         bool is_null = (data[i / 8] & (1 << (i % 8))) != 0;
 
         if (is_null) {
-            fields.push_back(val::Null());
+            fields.push_back(Value::Null());
             continue;
         }
 
-        if (schema[i].type == ColType::INT) {
+        if (schema[i].type == ColumnType::Int) {
             if (offset + sizeof(int32_t) > length) {
                 return Status::Error(StatusCode::CorruptedData, "Corrupted record: unexpected end of INT field");
             }
@@ -86,7 +86,7 @@ Result<std::vector<Value>> RecordManager::deserialize_record(const uint8_t* data
             offset += sizeof(int32_t);
             fields.push_back(Value(val));
         } 
-        else if (schema[i].type == ColType::STRING) {
+        else if (schema[i].type == ColumnType::String) {
             if (offset + sizeof(uint16_t) > length) {
                 return Status::Error(StatusCode::CorruptedData, "Corrupted record: unexpected end of STRING length");
             }
@@ -124,7 +124,6 @@ Result<RecordId> RecordManager::insert_record(PageId page_id,
     // Читаем заголовок страницы
     SlottedPageHeader header;
     std::memcpy(&header, page.data, sizeof(SlottedPageHeader));
-    std::cout << "DEBUG: record_len = " << record_len << std::endl;
 
     // ИСПРАВЛЕНИЕ: Если страница абсолютно новая (free_space_offset == 0),
     // инициализируем указатель свободной памяти на конец страницы (4096)

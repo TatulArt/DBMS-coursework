@@ -23,7 +23,7 @@ struct Schema {
     // Найти индекс первой INDEXED колонки (-1 если нет)
     int indexedColumn() const {
         for (int i = 0; i < static_cast<int>(columns.size()); ++i) {
-            if (columns[i].indexed) return i;
+            if (columns[i].is_indexed) return i;
         }
         return -1;
     }
