@@ -74,7 +74,7 @@ RecordID Table::insert(const std::vector<Value>& record) {
     PageId page_id = 0;
     auto result = recordManager_->insert_record(page_id, record, schema_.columns);
     if (!result.ok()) {
-        throw std::runtime_error("Insert failed: " + result.status().error());
+        throw std::runtime_error("Insert failed: " + result.status().message);
     }
     RecordID rid = result.value();
 
@@ -120,22 +120,16 @@ RecordID Table::findByIndex(const std::string& colName, const Value& key) {
     return res.value();
 }
 
-void Table::scan(std::function<void(RecordID, const std::vector<Value>&)> cb) const {
-    Page page;
-    pageManager_->read_page(0, page);
-    
-    SlottedPageHeader header;
-    std::memcpy(&header, page.data, sizeof(SlottedPageHeader));
-    
-    for (uint16_t i = 0; i < header.slot_count; ++i) {
-        Slot slot;
-        std::memcpy(&slot, page.data + sizeof(SlottedPageHeader) + i * sizeof(Slot), sizeof(Slot));
-        if (slot.length == 0) continue;
-        
-        auto fields_res = Serializer::deserialize_fields(page.data + slot.offset, slot.length, schema_.columns);
-        if (fields_res.ok()) {
-            cb(RecordID{0, i}, fields_res.value());
-        }
+void Table::scan(std::function<void(RecordId, const std::vector<Value>&)> cb) const {
+    // Обход страницы делает RecordManager: он пропускает удалённые слоты
+    // и проверяет, что слот не выходит за границы страницы.
+    auto records = recordManager_->scan_page(0, schema_.columns);
+    if (!records.ok()) {
+        throw StorageError("Scan failed: " + records.status().message);
+    }
+
+    for (const Record& record : records.value()) {
+        cb(record.id, record.fields);
     }
 }
 
@@ -161,10 +155,10 @@ void Table::remove(RecordID rid) {
     recordManager_->delete_record(rid);
 }
 
-std::vector<Value> Table::fetch(RecordID rid) {
+std::vector<Value> Table::fetch(RecordId rid) {
     auto result = recordManager_->get_record(rid, schema_.columns);
     if (!result.ok()) {
-        throw std::runtime_error("Fetch failed: " + result.status().error());
+        throw std::runtime_error("Fetch failed: " + result.status().message);
     }
     return result.value().fields;
 }

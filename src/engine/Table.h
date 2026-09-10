@@ -1,5 +1,5 @@
-#ifndef DBMS_PAIN_TABLE_H
-#define DBMS_PAIN_TABLE_H
+#ifndef DBMS_TABLE_H
+#define DBMS_TABLE_H
 
 #include <functional>
 #include <memory>
@@ -45,4 +45,4 @@ private:
 };
 
 
-#endif // DBMS_PAIN_TABLE_H
+#endif // DBMS_TABLE_H

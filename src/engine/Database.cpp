@@ -77,7 +77,7 @@ void Database::loadTables() {
 
             std::string typeStr;
             ss >> typeStr;
-            col.type = (typeStr == "INT") ? ColType::INT : ColType::STRING;
+            col.type = (typeStr == "INT") ? ColumnType::Int : ColumnType::String;
 
             std::string mod;
             while (ss >> mod) {
@@ -86,17 +86,17 @@ void Database::loadTables() {
                     col.is_indexed = true;
                 }
                 else if (mod == "NOT NULL")
-                    col.notNull = true;
+                    col.is_nullable = false;
                 else if (mod == "DEFAULT") {
                     std::string val;
                     ss >> val;
-                    if (col.type == ColType::INT) {
-                        col.defaultValue = Value(std::stoi(val));
+                    if (col.type == ColumnType::Int) {
+                        col.default_value = Value(std::stoi(val));
                     } else {
                         // убираем кавычки если есть
                         if (!val.empty() && val.front() == '"')
                             val = val.substr(1, val.size() - 2);
-                        col.defaultValue = Value(val);
+                        col.default_value = Value(val);
                     }
                 }
             }
@@ -121,17 +121,17 @@ void Database::saveSchema() {
         f << "TABLE " << name << "\n";
         for (const auto& col: tbl->schema().columns) {
             f << col.name << " ";
-            f << (col.type == ColType::INT ? "INT" : "STRING");
-            if (col.indexed)
+            f << (col.type == ColumnType::Int ? "INT" : "STRING");
+            if (col.is_indexed)
                 f << " INDEXED";
-            if (col.notNull)
+            if (!col.is_nullable)
                 f << " NOT NULL";
-            if (col.defaultValue.has_value()) {
+            if (!col.default_value.is_null()) {
                 f << " DEFAULT ";
-                if (val::isInt(col.defaultValue))
-                    f << val::getInt(col.defaultValue);
+                if ((!(col.default_value).is_null() && (col.default_value).get_type() == ColumnType::Int))
+                    f << (col.default_value).get_int();
                 else
-                    f << "\"" << val::getString(col.defaultValue) << "\"";
+                    f << "\"" << (col.default_value).get_string() << "\"";
             }
             f << "\n";
         }

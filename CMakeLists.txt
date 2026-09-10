@@ -25,9 +25,25 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(json)
 
-# Поиск Flex и Bison в системе
+# Поиск Flex и Bison в системе.
+#
+# Грамматика src/parser/parser.y использует %language, %define api.value.type
+# и api.parser.class — это возможности Bison 3.0 и новее. В macOS штатно
+# установлен Bison 2.3, который на них падает с "invalid directive: `%language'".
+# Homebrew ставит Bison 3.x в keg-only каталог (вне PATH), поэтому на macOS
+# подсказываем CMake, где его искать. На Linux блок пропускается.
+if(APPLE AND NOT BISON_EXECUTABLE)
+    foreach(_brew_bison /opt/homebrew/opt/bison/bin/bison /usr/local/opt/bison/bin/bison)
+        if(EXISTS ${_brew_bison})
+            set(BISON_EXECUTABLE ${_brew_bison})
+            message(STATUS "Используется Bison из Homebrew: ${_brew_bison}")
+            break()
+        endif()
+    endforeach()
+endif()
+
 find_package(FLEX REQUIRED)
-find_package(BISON REQUIRED)
+find_package(BISON 3.0 REQUIRED)
 
 enable_testing()
 

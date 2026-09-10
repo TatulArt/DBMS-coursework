@@ -147,17 +147,17 @@ std::string CreateTableQuery::toString() const {
             res += ", ";
         const auto& c = columns[i];
         res += c.name + " ";
-        res += (c.type == ColType::INT ? "INT" : "STRING");
+        res += (c.type == ColumnType::Int ? "INT" : "STRING");
         if (c.notNull)
             res += " NOT_NULL";
         if (c.indexed)
             res += " INDEXED";
-        if (!val::isNull(c.defaultValue)) {
+        if (!(c.defaultValue).is_null()) {
             res += " DEFAULT ";
-            if (val::isInt(c.defaultValue))
-                res += std::to_string(val::getInt(c.defaultValue));
+            if ((!(c.defaultValue).is_null() && (c.defaultValue).get_type() == ColumnType::Int))
+                res += std::to_string((c.defaultValue).get_int());
             else
-                res += "\"" + val::getString(c.defaultValue) + "\"";
+                res += "\"" + (c.defaultValue).get_string() + "\"";
         }
     }
     res += ")";
