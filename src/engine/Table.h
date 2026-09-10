@@ -1,5 +1,5 @@
-#ifndef DBMS_PAIN_TABLE_H
-#define DBMS_PAIN_TABLE_H
+#ifndef DBMS_TABLE_H
+#define DBMS_TABLE_H
 
 #include <functional>
 #include <memory>
@@ -24,25 +24,25 @@ public:
     [[nodiscard]] const Schema& schema() const { return schema_; }
 
     // DML (data manipulation language)
-    RecordId insert(const std::vector<Value>& record);
+    RecordID insert(const std::vector<Value>& record);
 
-    void scan(std::function<void(RecordId, const std::vector<Value>&)> cb) const;
+    void scan(std::function<void(RecordID, const std::vector<Value>&)> cb) const;
 
-    // Поиск по индексу — вернёт RecordId или бросит если нет индекса
-    RecordId findByIndex(const std::string& colName, const Value& key);
-    void update(RecordId rid, const std::vector<Value>& newRecord);
-    void remove(RecordId rid);
-    std::vector<Value> fetch(RecordId rid);
+    // Поиск по индексу — вернёт RecordID или бросит если нет индекса
+    RecordID findByIndex(const std::string& colName, const Value& key);
+    void update(RecordID rid, const std::vector<Value>& newRecord);
+    void remove(RecordID rid);
+    std::vector<Value> fetch(RecordID rid);
+
+    ~Table();
 
 private:
     Schema schema_;
     std::string dbPath_;
     std::unique_ptr<PageManager> pageManager_;
     std::unique_ptr<RecordManager> recordManager_;
-    // Каталог индексов таблицы (наша реализация на B+ дереве).
-    // nullptr, пока в схеме нет колонок с модификатором INDEXED.
     std::unique_ptr<IndexManager> indexManager_;
 };
 
 
-#endif // DBMS_PAIN_TABLE_H
+#endif // DBMS_TABLE_H

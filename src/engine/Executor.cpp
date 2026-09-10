@@ -87,6 +87,7 @@ QueryResult Executor::execCreateTable(const CreateTableQuery& q) {
     return {true, "", {}, 0};
 }
 
+
 QueryResult Executor::execDropTable(const DropTableQuery& q) {
     currentDatabase().dropTable(q.tableName);
     return {true, "", {}, 0};
@@ -100,49 +101,71 @@ QueryResult Executor::execInsert(const InsertQuery& q) {
 
     int affected = 0;
     
+    // Пакетный обход строк, которые передал твой парсер выражений (rowAst)
     for (const auto& rowAst : q.values) {
         std::vector<Value> record(schema.columns.size(), Value::Null());
 
-        std::cout << "DEBUG execInsert: rowAst.size() = " << rowAst.size() << std::endl;
-        std::cout << "DEBUG execInsert: q.columns.size() = " << q.columns.size() << std::endl;
-
+        // 1. Маппим пришедшие AST-узлы (Literal) в физический вектор полей Value
         if (q.columns.empty()) {
             for (size_t i = 0; i < rowAst.size() && i < schema.columns.size(); ++i) {
                 auto* lit = dynamic_cast<const Literal*>(rowAst[i].get());
-                if (!lit) {
-                    throw SemanticError("Expected literal value in INSERT");
-                }
+                if (!lit) return {false, "Expected literal value in INSERT", {}, affected};
                 record[i] = lit->value;
             }
         } else {
             for (size_t i = 0; i < q.columns.size(); ++i) {
                 int idx = schema.columnIndex(q.columns[i]);
-                if (idx == -1) {
-                    throw SemanticError("Unknown column: " + q.columns[i]);
-                }
+                if (idx == -1) return {false, "Unknown column: " + q.columns[i], {}, affected};
 
                 auto* lit = dynamic_cast<const Literal*>(rowAst[i].get());
-                if (!lit) {
-                    throw SemanticError("Expected literal value in INSERT");
-                }
-
+                if (!lit) return {false, "Expected literal value in INSERT", {}, affected};
                 record[idx] = lit->value;
             }
         }
 
+        // 2. Обработка констрейнтов NOT NULL и подстановка DEFAULT значений
         for (size_t i = 0; i < schema.columns.size(); ++i) {
             if (!(record[i]).is_null()) continue;
 
             const auto& col = schema.columns[i];
-            if (!col.default_value.is_null()) {
-                record[i] = col.default_value;
-            } else if (!col.is_nullable) {
-                throw SemanticError("Column '" + col.name + "' cannot be NULL");
+            if (col.defaultValue.has_value()) {
+                record[i] = col.defaultValue.value();
+            } else if (col.notNull) {
+                // Возвращаем красивую ошибку в консоль вместо аварийного падения!
+                return {false, "Constraint Violation: Column '" + col.name + "' cannot be NULL", {}, affected};
             }
         }
 
-        tbl.insert(record);
+        // 3. ЖЁСТКАЯ ПРОВЕРКА УНИКАЛЬНОСТИ ИНДЕКСОВ НА ДИСКЕ (Защита от дубликатов)
+        // Итерируемся по колонкам и ищем, нет ли дубликатов в B+ дереве твоего товарища
+        try {
+            // Если у таблицы инициализирован indexManager_, проверяем уникальность по B+ дереву
+            // (Поскольку у нас в types.h прописано ColumnDef::indexed, проверяем флаг)
+            for (size_t i = 0; i < schema.columns.size(); ++i) {
+                if (schema.columns[i].indexed) {
+                    std::string idxName = "idx_" + q.tableName + "_" + schema.columns[i].name;
+                    
+                    // Делаем пробный поиск по индексу. Если ключ найден — это дубликат!
+                    try {
+                        RecordID rid = tbl.findByIndex(schema.columns[i].name, record[i]);
+                        // Если строка выше не бросила исключение, значит ключ СУЩЕСТВУЕТ -> Блокируем!
+                        return {false, "Constraint Violation: Duplicate value for indexed column '" + schema.columns[i].name + "'", {}, affected};
+                    } catch (...) {
+                        // Исключение означает, что ключа нет в B+ дереве. Это отлично, идем дальше!
+                    }
+                }
+            }
+
+            // 4. Физическая вставка на диск и автоматическая регистрация ключа в B+ дереве
+            tbl.insert(record);
+
+        } catch (const std::exception& e) {
+            return {false, std::string("Storage Error: ") + e.what(), {}, affected};
+        } catch (...) {
+            return {false, "Unknown critical storage error during insert", {}, affected};
+        }
         
+        // 5. Логирование транзакции в Undo-Log для поддержки REVERT
         if (undoLog_) {
             auto keys = serializeKey(record, schema);
             undoLog_->logUndoInsert(currentDb_ + "." + q.tableName,
@@ -153,6 +176,7 @@ QueryResult Executor::execInsert(const InsertQuery& q) {
 
     return {true, "", {}, affected};
 }
+
 
 QueryResult Executor::execDelete(const DeleteQuery& q) {
     Database& db = currentDatabase();

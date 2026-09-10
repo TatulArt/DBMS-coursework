@@ -4,8 +4,73 @@
 
 #include "parser/SqlScanner.h"
 #include "parser.tab.hpp"
+#include <algorithm>
+#include <cctype>
+#include <unordered_map>
 
 void yyerror(const char* msg);
+
+// Вспомогательная функция для проверки регистра и возврата токена
+int process_keyword_or_ident(const std::string& text, yy::parser::semantic_type* yylval) {
+    // Карта всех поддерживаемых ключевых слов СУБД (в верхнем регистре)
+    static const std::unordered_map<std::string, int> KEYWORDS = {
+        {"SELECT", yy::parser::token::SELECT},
+        {"INSERT", yy::parser::token::INSERT},
+        {"UPDATE", yy::parser::token::UPDATE},
+        {"DELETE", yy::parser::token::DELETE},
+        {"CREATE", yy::parser::token::CREATE},
+        {"DROP", yy::parser::token::DROP},
+        {"USE", yy::parser::token::USE},
+        {"DATABASE", yy::parser::token::DATABASE},
+        {"TABLE", yy::parser::token::TABLE},
+        {"FROM", yy::parser::token::FROM},
+        {"WHERE", yy::parser::token::WHERE},
+        {"SET", yy::parser::token::SET},
+        {"VALUE", yy::parser::token::VALUE},
+        {"INTO", yy::parser::token::INTO},
+        {"AS", yy::parser::token::AS},
+        {"AND", yy::parser::token::AND},
+        {"OR", yy::parser::token::OR},
+        {"BETWEEN", yy::parser::token::BETWEEN},
+        {"LIKE", yy::parser::token::LIKE},
+        {"NOT", yy::parser::token::NOT},
+        {"NULL", yy::parser::token::NULL_},
+        {"INDEXED", yy::parser::token::INDEXED},
+        {"SUM", yy::parser::token::SUM},
+        {"COUNT", yy::parser::token::COUNT},
+        {"AVG", yy::parser::token::AVG},
+        {"DEFAULT", yy::parser::token::DEFAULT},
+        {"REVERT", yy::parser::token::REVERT},
+        {"INT", yy::parser::token::INT_TYPE},
+        {"STRING", yy::parser::token::STRING_TYPE}
+    };
+
+    // Переводим слово в верхний регистр для поиска в мапе
+    std::string upper_text = text;
+    std::transform(upper_text.begin(), upper_text.end(), upper_text.begin(), ::toupper);
+
+    auto it = KEYWORDS.find(upper_text);
+    if (it != KEYWORDS.end()) {
+        // Нашли ключевое слово! Проверяем строгое правило ТЗ на смешение регистров.
+        bool has_upper = false;
+        bool has_lower = false;
+        for (char c : text) {
+            if (std::isupper(static_cast<unsigned char>(c))) has_upper = true;
+            if (std::islower(static_cast<unsigned char>(c))) has_lower = true;
+        }
+        
+        if (has_upper && has_lower) {
+            std::string err = "Validation Error: Mixed case in keyword '" + text + "' is forbidden.";
+            yyerror(err.c_str());
+            return yy::parser::token::YYerror; // Возвращаем токен ошибки Bison
+        }
+        return it->second; // Регистр корректен, возвращаем токен команды
+    }
+
+    // Если это не ключевое слово, значит это обычное имя сущности (БД, таблицы, колонки)
+    yylval->emplace<std::string>(text);
+    return yy::parser::token::IDENTIFIER;
+}
 %}
 
 %option c++
@@ -24,37 +89,6 @@ WHITESPACE      [ \t\r\n]+
 TIMESTAMP       [0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}
 
 %%
-
- /* Ключевые слова (регистр неважен) */
-("SELECT"|"select")     { return yy::parser::token::SELECT; }
-("INSERT"|"insert")     { return yy::parser::token::INSERT; }
-("UPDATE"|"update")     { return yy::parser::token::UPDATE; }
-("DELETE"|"delete")     { return yy::parser::token::DELETE; }
-("CREATE"|"create")     { return yy::parser::token::CREATE; }
-("DROP"|"drop")         { return yy::parser::token::DROP; }
-("USE"|"use")           { return yy::parser::token::USE; }
-("DATABASE"|"database") { return yy::parser::token::DATABASE; }
-("TABLE"|"table")       { return yy::parser::token::TABLE; }
-("FROM"|"from")         { return yy::parser::token::FROM; }
-("WHERE"|"where")       { return yy::parser::token::WHERE; }
-("SET"|"set")           { return yy::parser::token::SET; }
-("VALUE"|"value")       { return yy::parser::token::VALUE; }
-("INTO"|"into")         { return yy::parser::token::INTO; }
-("AS"|"as")             { return yy::parser::token::AS; }
-("AND"|"and")           { return yy::parser::token::AND; }
-("OR"|"or")             { return yy::parser::token::OR; }
-("BETWEEN"|"between")   { return yy::parser::token::BETWEEN; }
-("LIKE"|"like")         { return yy::parser::token::LIKE; }
-("NOT"|"not")           { return yy::parser::token::NOT; }
-("NULL"|"null")         { return yy::parser::token::NULL_; }
-("INDEXED"|"indexed")   { return yy::parser::token::INDEXED; }
-("SUM"|"sum")           { return yy::parser::token::SUM; }
-("COUNT"|"count")       { return yy::parser::token::COUNT; }
-("AVG"|"avg")           { return yy::parser::token::AVG; }
-("DEFAULT"|"default")   { return yy::parser::token::DEFAULT; }
-("REVERT"|"revert")     { return yy::parser::token::REVERT; }
-("int"|"INT")           { return yy::parser::token::INT_TYPE; }
-("string"|"STRING")     { return yy::parser::token::STRING_TYPE; }
 
  /* Операторы */
 "=="            { return yy::parser::token::EQ; }
@@ -80,7 +114,6 @@ TIMESTAMP       [0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6
 {STRING}        {
                     std::string s(yytext + 1);
                     s.pop_back();  // убираем последнюю кавычку
-                    // Обработка экранирования
                     size_t pos = 0;
                     while ((pos = s.find("\\\"", pos)) != std::string::npos) {
                         s.replace(pos, 2, "\"");
@@ -89,10 +122,12 @@ TIMESTAMP       [0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6
                     yylval->emplace<std::string>(s);
                     return yy::parser::token::STRING;
                 }
+
 {IDENT}         {
-                    yylval->emplace<std::string>(yytext);
-                    return yy::parser::token::IDENTIFIER;
+                    // Обрабатываем идентификатор через умную функцию
+                    return process_keyword_or_ident(yytext, yylval);
                 }
+
 {TIMESTAMP}     {
                     yylval->emplace<std::string>(yytext);
                     return yy::parser::token::TIMESTAMP;

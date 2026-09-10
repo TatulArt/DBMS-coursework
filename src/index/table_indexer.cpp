@@ -174,17 +174,20 @@ Result<RecordId> TableIndexer::insert_row(TableSchema& schema, const std::vector
     // 1. Проверяем уникальность индексируемых колонок ДО записи на диск,
     //    чтобы не пришлось откатывать уже вставленную запись.
     for (size_t i = 0; i < schema.columns.size(); ++i) {
-        const ColumnDef& column = schema.columns[i];
-        if (!column.is_indexed) continue;
-
-        const std::string index_name = index_name_for(schema.table_name, column.name);
-        if (!index_manager_.has_index(index_name)) continue;
-
-        if (index_manager_.find_entry(index_name, fields[i]).ok()) {
-            return Result<RecordId>(Status::Error(
-                StatusCode::UniqueConstraintViolation,
-                "Duplicate value " + fields[i].to_string() + " for indexed column " +
-                    schema.table_name + "." + column.name));
+        if (schema.columns[i].indexed) { // Проверяем абсолютно все INDEXED колонки!
+            std::string index_name = index_name_for(schema.table_name, schema.columns[i].name);
+            
+            if (index_manager_.has_index(index_name)) {
+                // Ищем ключ fields[i] в дисковом B+ дереве твоего друга
+                auto lookup = index_manager_.find_entry(index_name, fields[i]);
+                
+                if (lookup.ok()) {
+                    // Если lookup.ok() равен true, значит такой ключ УЖЕ есть на диске!
+                    // Генерируем жесткую ошибку уникальности, чтобы заблокировать INSERT!
+                    throw TypeError("Unique constraint violation on indexed column '" + 
+                                    schema.columns[i].name + "' with value: " + fields[i].to_string());
+                }
+            }
         }
     }
 

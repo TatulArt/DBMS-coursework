@@ -169,7 +169,10 @@ struct ColumnSpec {
     bool notNull = false;
     bool indexed = false;
     Value defaultValue;
+    bool is_nullable = true;
+    bool is_indexed = false;
 };
+
 
 class CreateTableQuery : public ASTNode {
 public:

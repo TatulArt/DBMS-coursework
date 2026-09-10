@@ -75,7 +75,7 @@
 %type <std::vector<std::unique_ptr<ASTNode>>> value_list
 %type <std::vector<ColumnSpec>> column_definitions
 %type <ColumnSpec> column_definition
-%type <ColumnType> type_spec
+%type <ColumnType> type_spec 
 %type <bool> not_null_opt indexed_opt
 %type <Value> default_opt
 
@@ -283,7 +283,7 @@ literal:
     }
     | NULL_  { 
         std::cout << "DEBUG parser: NULL" << std::endl;
-        $$ = std::make_unique<Literal>(Value::Null());
+        $$ = std::make_unique<Literal>(std::nullopt);
     }
 ;
 
@@ -412,13 +412,18 @@ column_definition:
         col.notNull = $3;
         col.indexed = $4;
         col.defaultValue = $5;
+        
+        // Переходные флаги для table_indexer
+        col.is_indexed = $4;
+        col.is_nullable = !$3;
+        
         $$ = std::move(col);
     }
 ;
 
 type_spec:
-    INT_TYPE    { $$ = ColumnType::Int; }
-    | STRING_TYPE { $$ = ColumnType::String; }
+    INT_TYPE      { $$ = ColumnType::INT; }
+    | STRING_TYPE { $$ = ColumnType::STRING; }
 ;
 
 not_null_opt:
