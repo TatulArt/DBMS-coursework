@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "test_db_path.h"
 #include <cstdio>
 #include "../src/storage/page_manager.h"
 #include "../src/storage/record_manager.h"
@@ -6,10 +7,11 @@
 
 class StoragePipelineTest : public ::testing::Test {
 protected:
-    std::string test_db_file = "test_pipeline.db";
+    std::string test_db_file;
     std::vector<ColumnDef> schema;
 
     void SetUp() override {
+        test_db_file = unique_db_file("test_pipeline");
         // Удаляем тестовый файл, если он остался от прошлых запусков
         std::remove(test_db_file.c_str());
 

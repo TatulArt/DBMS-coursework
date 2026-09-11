@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "test_db_path.h"
 #include <cstdio>
 #include <algorithm>
 #include <map>
@@ -61,8 +62,11 @@ TEST(StringKeyTest, RoundTripAndLengthLimit) {
 // ----------------------------------------------------------------------------
 class StringBPlusTreeTest : public ::testing::Test {
 protected:
-    const std::string db_file = "test_string_btree.db";
-    void SetUp() override { std::remove(db_file.c_str()); }
+    std::string db_file;
+    void SetUp() override {
+        db_file = unique_db_file("test_string_btree");
+        std::remove(db_file.c_str());
+    }
     void TearDown() override { std::remove(db_file.c_str()); }
 
     static StringKey key(const std::string& s) {
@@ -192,7 +196,7 @@ TEST_F(StringBPlusTreeTest, RemoveWithMergeKeepsLeafChain) {
 // ----------------------------------------------------------------------------
 class StringTableIndexTest : public ::testing::Test {
 protected:
-    const std::string db_file = "test_string_table.db";
+    std::string db_file;
 
     std::unique_ptr<PageManager> pm_;
     std::unique_ptr<RecordManager> rm_;
@@ -201,6 +205,7 @@ protected:
     TableSchema accounts_;
 
     void SetUp() override {
+        db_file = unique_db_file("test_string_table");
         std::remove(db_file.c_str());
         pm_ = std::make_unique<PageManager>(db_file);
         ASSERT_TRUE(pm_->open().ok());

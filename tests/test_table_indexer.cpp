@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "test_db_path.h"
 #include <cstdio>
 #include <algorithm>
 #include <string>
@@ -11,7 +12,7 @@
 // ============================================================================
 class TableIndexerTest : public ::testing::Test {
 protected:
-    const std::string db_file = "test_table_indexer.db";
+    std::string db_file;
 
     std::unique_ptr<PageManager> pm_;
     std::unique_ptr<RecordManager> rm_;
@@ -20,6 +21,7 @@ protected:
     TableSchema users_;
 
     void SetUp() override {
+        db_file = unique_db_file("test_table_indexer");
         std::remove(db_file.c_str());
 
         pm_ = std::make_unique<PageManager>(db_file);

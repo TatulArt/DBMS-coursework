@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "test_db_path.h"
 #include <cstdio>
 #include <vector>
 #include <numeric>
@@ -10,9 +11,10 @@
 
 class BPlusTreeTest : public ::testing::Test {
 protected:
-    const std::string db_file = "test_btree.db";
+    std::string db_file;
 
     void SetUp() override {
+        db_file = unique_db_file("test_btree");
         // Удаляем старый файл базы данных перед каждым тестом
         std::remove(db_file.c_str());
     }

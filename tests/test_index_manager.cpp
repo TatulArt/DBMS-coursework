@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "test_db_path.h"
 #include <memory>
 #include <string>
 #include "../src/index/index_manager.h"
@@ -7,9 +8,11 @@
 
 class IndexManagerTest : public ::testing::Test {
 protected:
+    std::string db_filename;
+
     void SetUp() override {
         // Создаем временный файл БД для тестирования
-        std::string db_filename = "test_index_mgr.db";
+        db_filename = unique_db_file("test_index_mgr");
         std::remove(db_filename.c_str());
 
         page_manager_ = std::make_unique<PageManager>(db_filename);
@@ -22,7 +25,7 @@ protected:
         index_manager_.reset();
         page_manager_->close();
         page_manager_.reset();
-        std::remove("test_index_mgr.db");
+        std::remove(db_filename.c_str());
     }
 
     std::unique_ptr<PageManager> page_manager_;
@@ -131,9 +134,12 @@ TEST_F(IndexManagerTest, DropIndexSuccess) {
 
 class IndexCatalogPersistenceTest : public ::testing::Test {
 protected:
-    const std::string db_file = "test_index_catalog.db";
+    std::string db_file;
 
-    void SetUp() override { std::remove(db_file.c_str()); }
+    void SetUp() override {
+        db_file = unique_db_file("test_index_catalog");
+        std::remove(db_file.c_str());
+    }
     void TearDown() override { std::remove(db_file.c_str()); }
 };
 
