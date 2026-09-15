@@ -2,6 +2,36 @@
 #include "serializer.h"
 #include <algorithm>
 
+namespace {
+
+// Страница, только что выделенная allocate_page(), заполнена нулями.
+// Нулевой заголовок означает не «страница с 0 слотов и 0 свободного места»,
+// а «страница ещё не размечена»: приводим его к корректному виду.
+void normalize_fresh_header(SlottedPageHeader& header) {
+    if (header.free_space_offset == 0) {
+        header.free_space_offset = PAGE_SIZE;
+
+        // У неразмеченной страницы next_page_id тоже нулевой, а 0 — это
+        // страница метаданных. Без этой поправки обход цепочки зациклился бы.
+        if (header.slot_count == 0) {
+            header.next_page_id = INVALID_PAGE_ID;
+        }
+    }
+}
+
+// Сколько байт на странице реально заняты живыми записями
+uint32_t live_bytes_of(const Page& page, const SlottedPageHeader& header) {
+    uint32_t used = 0;
+    for (uint16_t i = 0; i < header.slot_count; ++i) {
+        Slot slot;
+        std::memcpy(&slot, page.data + sizeof(SlottedPageHeader) + i * sizeof(Slot), sizeof(Slot));
+        used += slot.length;
+    }
+    return used;
+}
+
+} // namespace
+
 // ============================================================================
 // СЕРИАЛИЗАЦИЯ СТРОКИ В БАЙТОВЫЙ МАССИВ
 // Формат байт записи:
@@ -124,20 +154,34 @@ Result<RecordId> RecordManager::insert_record(PageId page_id,
     // Читаем заголовок страницы
     SlottedPageHeader header;
     std::memcpy(&header, page.data, sizeof(SlottedPageHeader));
-
-    // ИСПРАВЛЕНИЕ: Если страница абсолютно новая (free_space_offset == 0),
-    // инициализируем указатель свободной памяти на конец страницы (4096)
-    if (header.free_space_offset == 0) {
-        header.free_space_offset = PAGE_SIZE;
-    }
+    normalize_fresh_header(header);
 
     // Вычисляем объём требуемого свободного места
     size_t needed_space = record_len + sizeof(Slot);
     size_t current_slot_array_end = sizeof(SlottedPageHeader) + header.slot_count * sizeof(Slot);
 
-    if (header.free_space_offset < current_slot_array_end || 
-        (header.free_space_offset - current_slot_array_end) < needed_space) {
-        return Status::Error(StatusCode::IOError, "Page " + std::to_string(page_id) + " is full");
+    const bool fits = header.free_space_offset >= current_slot_array_end &&
+                      (header.free_space_offset - current_slot_array_end) >= needed_space;
+
+    if (!fits) {
+        // Непрерывного куска не хватает, но на странице могут быть «дыры»
+        // от удалённых записей. Уплотняем страницу и пробуем ещё раз.
+        std::memcpy(page.data, &header, sizeof(SlottedPageHeader));
+        st = page_manager_.write_page(page_id, page);
+        if (!st.ok()) return st;
+
+        st = compact_page(page_id);
+        if (!st.ok()) return st;
+
+        st = page_manager_.read_page(page_id, page);
+        if (!st.ok()) return st;
+        std::memcpy(&header, page.data, sizeof(SlottedPageHeader));
+
+        current_slot_array_end = sizeof(SlottedPageHeader) + header.slot_count * sizeof(Slot);
+        if (header.free_space_offset < current_slot_array_end ||
+            (header.free_space_offset - current_slot_array_end) < needed_space) {
+            return Status::Error(StatusCode::IOError, "Page " + std::to_string(page_id) + " is full");
+        }
     }
 
     // Записываем тело записи в конец свободного места страницы
@@ -279,20 +323,153 @@ Result<bool> RecordManager::page_has_space(PageId page_id, size_t needed_bytes) 
 
     SlottedPageHeader header;
     std::memcpy(&header, page.data, sizeof(SlottedPageHeader));
-    if (header.free_space_offset == 0) {
-        header.free_space_offset = PAGE_SIZE; // Страница ещё не использовалась
-    }
+    normalize_fresh_header(header);
 
-    const size_t slot_array_end = sizeof(SlottedPageHeader) + header.slot_count * sizeof(Slot);
-    if (header.free_space_offset < slot_array_end) {
+    // Новая запись всегда получает новый слот: переиспользовать слот удалённой
+    // записи нельзя, иначе «висячая» ссылка RecordId из индекса стала бы
+    // указывать на чужую строку.
+    const size_t slot_array_end =
+        sizeof(SlottedPageHeader) + (static_cast<size_t>(header.slot_count) + 1) * sizeof(Slot);
+
+    // Считаем место, которое будет доступно ПОСЛЕ уплотнения страницы:
+    // байты удалённых записей вернутся в оборот
+    const size_t used = live_bytes_of(page, header);
+    if (slot_array_end + used > PAGE_SIZE) {
         return false;
     }
 
-    // Помимо самой записи нужен ещё один слот в массиве слотов
-    return (header.free_space_offset - slot_array_end) >= (needed_bytes + sizeof(Slot));
+    return (PAGE_SIZE - slot_array_end - used) >= needed_bytes;
 }
 
 size_t RecordManager::record_size(const std::vector<Value>& fields,
                                   const std::vector<ColumnDef>& schema) {
     return Serializer::get_serialized_size(fields, schema);
+}
+
+// ============================================================================
+// ЦЕПОЧКА СТРАНИЦ КУЧИ
+// ============================================================================
+
+Status RecordManager::init_page(PageId page_id) {
+    Page page;
+    Status st = page_manager_.read_page(page_id, page);
+    if (!st.ok()) return st;
+
+    page.clear();
+    page.id = page_id;
+
+    SlottedPageHeader header;
+    header.slot_count = 0;
+    header.free_space_offset = PAGE_SIZE;
+    header.next_page_id = INVALID_PAGE_ID;
+    std::memcpy(page.data, &header, sizeof(SlottedPageHeader));
+
+    return page_manager_.write_page(page_id, page);
+}
+
+Result<PageId> RecordManager::next_page(PageId page_id) {
+    Page page;
+    Status st = page_manager_.read_page(page_id, page);
+    if (!st.ok()) return Result<PageId>(st);
+
+    SlottedPageHeader header;
+    std::memcpy(&header, page.data, sizeof(SlottedPageHeader));
+    normalize_fresh_header(header);
+
+    // Ссылка на саму себя означала бы бесконечный обход цепочки
+    if (header.next_page_id == page_id) {
+        return Result<PageId>(Status::Error(
+            StatusCode::CorruptedData,
+            "Heap page " + std::to_string(page_id) + " points at itself"));
+    }
+
+    return Result<PageId>(header.next_page_id);
+}
+
+Status RecordManager::set_next_page(PageId page_id, PageId next) {
+    if (next == page_id) {
+        return Status::Error(StatusCode::InvalidArgument,
+                             "Heap page cannot follow itself");
+    }
+
+    Page page;
+    Status st = page_manager_.read_page(page_id, page);
+    if (!st.ok()) return st;
+
+    SlottedPageHeader header;
+    std::memcpy(&header, page.data, sizeof(SlottedPageHeader));
+    normalize_fresh_header(header);
+
+    header.next_page_id = next;
+    std::memcpy(page.data, &header, sizeof(SlottedPageHeader));
+
+    return page_manager_.write_page(page_id, page);
+}
+
+// ============================================================================
+// УПЛОТНЕНИЕ СТРАНИЦЫ
+//
+// Записи лежат в конце страницы и растут вниз, к массиву слотов. После
+// удаления между ними остаются «дыры». Здесь живые записи переписываются
+// подряд заново, а free_space_offset возвращается к фактической границе.
+// Номера слотов не меняются: RecordId, сохранённые в B+ деревьях, остаются
+// корректными.
+// ============================================================================
+Status RecordManager::compact_page(PageId page_id) {
+    Page page;
+    Status st = page_manager_.read_page(page_id, page);
+    if (!st.ok()) return st;
+
+    SlottedPageHeader header;
+    std::memcpy(&header, page.data, sizeof(SlottedPageHeader));
+    normalize_fresh_header(header);
+
+    const size_t max_slots = (PAGE_SIZE - sizeof(SlottedPageHeader)) / sizeof(Slot);
+    if (header.slot_count > max_slots) {
+        return Status::Error(StatusCode::CorruptedData,
+                             "Page " + std::to_string(page_id) + " reports impossible slot count");
+    }
+
+    // Собираем живые записи во временный буфер, затем раскладываем обратно
+    std::vector<Slot> slots(header.slot_count);
+    for (uint16_t i = 0; i < header.slot_count; ++i) {
+        std::memcpy(&slots[i], page.data + sizeof(SlottedPageHeader) + i * sizeof(Slot), sizeof(Slot));
+        if (slots[i].length != 0 &&
+            static_cast<size_t>(slots[i].offset) + slots[i].length > PAGE_SIZE) {
+            return Status::Error(StatusCode::CorruptedData,
+                                 "Slot " + std::to_string(i) + " points outside of page " +
+                                 std::to_string(page_id));
+        }
+    }
+
+    std::vector<uint8_t> region(PAGE_SIZE, 0);
+    uint16_t write_offset = PAGE_SIZE;
+
+    // Идём от последнего слота к первому, укладывая записи от конца страницы:
+    // так сохраняется исходный порядок данных внутри страницы
+    for (uint16_t i = header.slot_count; i-- > 0;) {
+        if (slots[i].length == 0) continue;
+
+        write_offset = static_cast<uint16_t>(write_offset - slots[i].length);
+        std::memcpy(region.data() + write_offset, page.data + slots[i].offset, slots[i].length);
+        slots[i].offset = write_offset;
+    }
+
+    const size_t slot_array_end = sizeof(SlottedPageHeader) + header.slot_count * sizeof(Slot);
+    if (write_offset < slot_array_end) {
+        return Status::Error(StatusCode::CorruptedData,
+                             "Page " + std::to_string(page_id) + " does not fit its own live records");
+    }
+
+    // Область данных перезаписываем целиком: старые «хвосты» затираются нулями
+    std::memcpy(page.data + slot_array_end, region.data() + slot_array_end, PAGE_SIZE - slot_array_end);
+
+    for (uint16_t i = 0; i < header.slot_count; ++i) {
+        std::memcpy(page.data + sizeof(SlottedPageHeader) + i * sizeof(Slot), &slots[i], sizeof(Slot));
+    }
+
+    header.free_space_offset = write_offset;
+    std::memcpy(page.data, &header, sizeof(SlottedPageHeader));
+
+    return page_manager_.write_page(page_id, page);
 }

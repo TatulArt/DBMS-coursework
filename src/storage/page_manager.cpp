@@ -3,6 +3,22 @@
 #include <cstring> // Для std::memset
 #include <cstdio>  // Для std::fopen / std::fclose
 
+namespace {
+
+// Служебная подпись освобождённой страницы. Нужна, чтобы free_page() мог
+// отличить страницу, которая уже лежит в списке свободных, от обычной
+// страницы с данными, и не закольцевать список повторным освобождением.
+constexpr uint32_t FREE_PAGE_MAGIC = 0xF2EE9A9E;
+
+#pragma pack(push, 1)
+struct FreePageHeader {
+    uint32_t magic;
+    PageId next_free_page_id;
+};
+#pragma pack(pop)
+
+} // namespace
+
 PageManager::PageManager(const std::string& file_path)
     : file_path_(file_path) {}
 
@@ -47,6 +63,8 @@ Status PageManager::create_database(const std::string& db_path) {
     meta->magic_number = DB_MAGIC_NUMBER;
     meta->root_page_id = INVALID_PAGE_ID;
     meta->index_catalog_page_id = INVALID_PAGE_ID;
+    meta->first_data_page_id = INVALID_PAGE_ID;
+    meta->free_list_head = INVALID_PAGE_ID;
 
     return write_page(METADATA_PAGE_ID, meta_page);
 }
@@ -64,6 +82,17 @@ Result<DatabaseMetadata> PageManager::read_metadata() const {
         return Result<DatabaseMetadata>(
             Status::Error(StatusCode::CorruptedData, "Invalid database magic number"));
     }
+
+    // Файл мог быть создан версией без полей кучи и списка свободных страниц:
+    // там на их месте лежат нули. Ноль — это 0-я страница, которая всегда
+    // занята самими метаданными, поэтому трактуем его как «поле не заполнено».
+    if (meta.first_data_page_id == METADATA_PAGE_ID) {
+        meta.first_data_page_id = INVALID_PAGE_ID;
+    }
+    if (meta.free_list_head == METADATA_PAGE_ID) {
+        meta.free_list_head = INVALID_PAGE_ID;
+    }
+
     return Result<DatabaseMetadata>(meta);
 }
 
@@ -228,10 +257,126 @@ Status PageManager::allocate_page(PageId& new_page_id, Page& page_out) {
         return Status::Error(StatusCode::IOError, "Database file is not open");
     }
 
+    // 1. Пробуем переиспользовать страницу из списка свободных.
+    // Если файл ещё не размечен как база (нет валидных метаданных), список
+    // просто недоступен — тогда работаем как раньше, расширяя файл.
+    auto meta_res = read_metadata();
+    if (meta_res.ok() && meta_res.value().free_list_head != INVALID_PAGE_ID) {
+        DatabaseMetadata meta = meta_res.value();
+        const PageId reused_id = meta.free_list_head;
+
+        Page reused;
+        Status st = read_page(reused_id, reused);
+        if (!st.ok()) return st;
+
+        FreePageHeader marker{};
+        std::memcpy(&marker, reused.data, sizeof(FreePageHeader));
+
+        // Подпись на месте — снимаем страницу с головы списка.
+        // Если подписи нет, список повреждён: не рискуем отдать занятую
+        // страницу и молча переходим к расширению файла.
+        if (marker.magic == FREE_PAGE_MAGIC) {
+            meta.free_list_head = marker.next_free_page_id;
+            st = write_metadata(meta);
+            if (!st.ok()) return st;
+
+            page_out.clear();
+            page_out.id = reused_id;
+            new_page_id = reused_id;
+
+            // Страницу нужно обнулить на диске: в ней ещё лежат старые байты
+            return write_page(reused_id, page_out);
+        }
+    }
+
+    // 2. Свободных страниц нет — дописываем новую в конец файла
     new_page_id = num_pages_;
     page_out.clear();
     page_out.id = new_page_id;
 
-    // Пишем пустую страницу в конец файла
     return write_page(new_page_id, page_out);
+}
+
+Status PageManager::free_page(PageId page_id) {
+    if (page_id == INVALID_PAGE_ID) {
+        return Status::Error(StatusCode::InvalidArgument, "Cannot free INVALID_PAGE_ID");
+    }
+    if (page_id >= num_pages_) {
+        return Status::Error(StatusCode::InvalidArgument,
+                             "Cannot free page " + std::to_string(page_id) + ": out of bounds");
+    }
+
+    auto meta_res = read_metadata();
+    if (!meta_res.ok()) {
+        // Файл не размечен как база (так работают отдельные деревья в тестах):
+        // списка свободных страниц нет, поэтому просто обнуляем страницу,
+        // чтобы её содержимое не выглядело как валидный узел дерева.
+        Page cleared;
+        cleared.clear();
+        cleared.id = page_id;
+        return write_page(page_id, cleared);
+    }
+    DatabaseMetadata meta = meta_res.value();
+
+    // В размеченном файле нулевая страница — это сам заголовок базы
+    if (page_id == METADATA_PAGE_ID) {
+        return Status::Error(StatusCode::InvalidArgument,
+                             "Page 0 holds the database header and cannot be freed");
+    }
+
+    Page page;
+    Status st = read_page(page_id, page);
+    if (!st.ok()) return st;
+
+    // Повторное освобождение той же страницы закольцевало бы список
+    FreePageHeader existing{};
+    std::memcpy(&existing, page.data, sizeof(FreePageHeader));
+    if (existing.magic == FREE_PAGE_MAGIC) {
+        return Status::OK();
+    }
+
+    page.clear();
+    page.id = page_id;
+
+    FreePageHeader marker{};
+    marker.magic = FREE_PAGE_MAGIC;
+    marker.next_free_page_id = meta.free_list_head;
+    std::memcpy(page.data, &marker, sizeof(FreePageHeader));
+
+    st = write_page(page_id, page);
+    if (!st.ok()) return st;
+
+    meta.free_list_head = page_id;
+    return write_metadata(meta);
+}
+
+Result<uint32_t> PageManager::free_page_count() const {
+    auto meta_res = read_metadata();
+    if (!meta_res.ok()) {
+        return Result<uint32_t>(meta_res.status());
+    }
+
+    uint32_t count = 0;
+    PageId cursor = meta_res.value().free_list_head;
+
+    // Счётчик ограничен размером файла: даже если список окажется
+    // закольцован, обход не станет бесконечным
+    while (cursor != INVALID_PAGE_ID && count <= num_pages_) {
+        Page page;
+        Status st = read_page(cursor, page);
+        if (!st.ok()) return Result<uint32_t>(st);
+
+        FreePageHeader marker{};
+        std::memcpy(&marker, page.data, sizeof(FreePageHeader));
+        if (marker.magic != FREE_PAGE_MAGIC) {
+            return Result<uint32_t>(Status::Error(
+                StatusCode::CorruptedData,
+                "Free list points at page " + std::to_string(cursor) + " which is not free"));
+        }
+
+        ++count;
+        cursor = marker.next_free_page_id;
+    }
+
+    return Result<uint32_t>(count);
 }

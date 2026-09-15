@@ -367,9 +367,29 @@ Status IndexManager::drop_index(const std::string& index_name) {
         return Status::Error(StatusCode::RecordNotFound, "Index not found: " + index_name);
     }
 
-    // Примечание: страницы удалённого дерева остаются занятыми в файле.
-    // Их переиспользование требует списка свободных страниц в PageManager,
-    // которого пока нет.
+    // Страницы удаляемого дерева возвращаем в список свободных страниц:
+    // иначе после DROP INDEX файл только рос бы.
+    //
+    // Дерево строим без listener'а: каталог мы всё равно перезапишем ниже,
+    // а уведомление о смене корня искало бы уже удалённую запись.
+    if (it->second.root_page_id != INVALID_PAGE_ID) {
+        // Пустой listener нужен, чтобы дерево не записало «корень пропал»
+        // в DatabaseMetadata::root_page_id: каталог хранит корни сам.
+        auto ignore_root = [](PageId) { return Status::OK(); };
+
+        Status st = Status::OK();
+        if (it->second.key_type == ColumnType::Int) {
+            BPlusTree tree(page_manager_, it->second.root_page_id);
+            tree.set_root_listener(ignore_root);
+            st = tree.destroy();
+        } else {
+            StringBPlusTree tree(page_manager_, it->second.root_page_id);
+            tree.set_root_listener(ignore_root);
+            st = tree.destroy();
+        }
+        if (!st.ok()) return st;
+    }
+
     index_catalog_.erase(it);
     return save();
 }

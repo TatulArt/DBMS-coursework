@@ -212,7 +212,15 @@ public:
     // Проверка структурной целостности дерева (используется в тестах)
     Status validate();
 
+    // Полное удаление дерева: все его страницы возвращаются в список
+    // свободных страниц PageManager и переиспользуются следующими
+    // выделениями. Дерево становится пустым.
+    Status destroy();
+
 private:
+    // Обход дерева с возвратом каждой страницы в список свободных
+    Status free_subtree(PageId page_id, uint32_t depth_budget);
+
     PageManager& page_manager_;
     PageId root_page_id_{INVALID_PAGE_ID};
     RootChangedCallback root_listener_{};

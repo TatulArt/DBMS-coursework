@@ -233,8 +233,24 @@ struct DatabaseMetadata {
     uint32_t magic_number;
     PageId root_page_id;          
     PageId index_catalog_page_id; 
+
+    // Голова цепочки страниц кучи таблицы. Сами записи НЕ лежат на 0-й
+    // странице: там только этот заголовок, и slotted-заголовок записи
+    // затирал бы magic_number.
+    PageId first_data_page_id;
+
+    // Голова односвязного списка свободных страниц. Страницы, освобождённые
+    // при слиянии узлов дерева или удалении индекса, возвращаются сюда
+    // и переиспользуются следующим allocate_page().
+    PageId free_list_head;
 };
 #pragma pack(pop)
+
+// Страница 0 всегда занята метаданными, поэтому 0 в полях-ссылках означает
+// «поле не заполнено» (так читаются файлы, созданные до появления этих полей).
+inline bool is_valid_data_page(PageId page_id) {
+    return page_id != INVALID_PAGE_ID && page_id != METADATA_PAGE_ID;
+}
 
 inline Value Value_Null() { return Value(); }
 

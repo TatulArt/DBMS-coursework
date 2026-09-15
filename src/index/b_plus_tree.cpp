@@ -984,11 +984,9 @@ Status BPlusTreeT<KeyT>::coalesce(Page& page, PageId page_id,
     Status st = page_manager_.write_page(left_id, *left);
     if (!st.ok()) return st;
 
-    // Освобождаем правую страницу: обнуляем, чтобы «мусорные» данные
-    // не выглядели как валидный узел дерева.
-    Page freed;
-    freed.clear();
-    st = page_manager_.write_page(right_id, freed);
+    // Правая страница больше не нужна: возвращаем её в список свободных
+    // страниц, чтобы место переиспользовалось следующими выделениями.
+    st = page_manager_.free_page(right_id);
     if (!st.ok()) return st;
 
     for (PageId child : reparented) {
@@ -1029,9 +1027,7 @@ Status BPlusTreeT<KeyT>::adjust_root(PageId root_id) {
 
     // 1. Корень — лист и он опустел: дерево становится пустым
     if (header->page_type == BTreePageType::LEAF && header->num_keys == 0) {
-        Page freed;
-        freed.clear();
-        st = page_manager_.write_page(root_id, freed);
+        st = page_manager_.free_page(root_id);
         if (!st.ok()) return st;
 
         root_page_id_ = INVALID_PAGE_ID;
@@ -1046,9 +1042,7 @@ Status BPlusTreeT<KeyT>::adjust_root(PageId root_id) {
         st = set_parent(new_root_id, INVALID_PAGE_ID);
         if (!st.ok()) return st;
 
-        Page freed;
-        freed.clear();
-        st = page_manager_.write_page(root_id, freed);
+        st = page_manager_.free_page(root_id);
         if (!st.ok()) return st;
 
         root_page_id_ = new_root_id;
@@ -1152,6 +1146,55 @@ Status BPlusTreeT<KeyT>::validate_subtree(PageId page_id, PageId expected_parent
     return Status::OK();
 }
 
+
+// ----------------------------------------------------------------------------
+// Полное удаление дерева
+// ----------------------------------------------------------------------------
+
+template <typename KeyT>
+Status BPlusTreeT<KeyT>::destroy() {
+    if (root_page_id_ == INVALID_PAGE_ID) {
+        return Status::OK();
+    }
+
+    // Глубина дерева не может превышать числа страниц в файле —
+    // используем это как страховку от зацикливания на повреждённых данных
+    Status st = free_subtree(root_page_id_, page_manager_.get_num_pages() + 1);
+    if (!st.ok()) return st;
+
+    root_page_id_ = INVALID_PAGE_ID;
+    return notify_root_changed();
+}
+
+template <typename KeyT>
+Status BPlusTreeT<KeyT>::free_subtree(PageId page_id, uint32_t depth_budget) {
+    if (page_id == INVALID_PAGE_ID) {
+        return Status::OK();
+    }
+    if (depth_budget == 0) {
+        return Status::Error(StatusCode::CorruptedData,
+                             "B+ tree is too deep: page chain looks cyclic");
+    }
+
+    Page page;
+    Status st = page_manager_.read_page(page_id, page);
+    if (!st.ok()) return st;
+
+    const auto* header = BPlusTreePageT<KeyT>::get_header(page);
+
+    // У внутреннего узла N ключей и N+1 детей — обходим всех
+    if (header->page_type == BTreePageType::INTERNAL) {
+        const auto* children = BPlusTreePageT<KeyT>::get_internal_values(page);
+        std::vector<PageId> to_free(children, children + header->num_keys + 1);
+
+        for (PageId child : to_free) {
+            st = free_subtree(child, depth_budget - 1);
+            if (!st.ok()) return st;
+        }
+    }
+
+    return page_manager_.free_page(page_id);
+}
 
 // ============================================================================
 // Явные инстанцирования: индекс по INT-колонке и по STRING-колонке

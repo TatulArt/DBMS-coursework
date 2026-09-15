@@ -19,3 +19,6 @@ _deps/
 *.flex.cpp
 *.tab.cpp
 *.tab.hpp
+
+*.dat
+*.log

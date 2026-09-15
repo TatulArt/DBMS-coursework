@@ -576,3 +576,166 @@ SELECT * FROM gone;
     EXPECT_TRUE(extract_results(after.output).empty())
         << "Удалённая таблица вернулась после перезапуска:\n" << after.output;
 }
+
+// ----------------------------------------------------------------------------
+// 17. Таблица не помещается в одну страницу.
+//
+//     Раньше вся куча таблицы жила на нулевой странице: после ~110 коротких
+//     строк вставка начинала падать с ошибкой переполнения. Теперь страницы
+//     кучи связаны в цепочку и выделяются по мере надобности.
+// ----------------------------------------------------------------------------
+TEST_F(CliTest, TableGrowsBeyondOnePage) {
+    std::string sql =
+        "CREATE DATABASE big;\n"
+        "USE big;\n"
+        "CREATE TABLE t (id INT INDEXED, name STRING);\n";
+
+    const int rows = 500;
+    for (int i = 1; i <= rows; ++i) {
+        sql += "INSERT INTO t (id, name) VALUE (" + std::to_string(i) +
+               ", \"row-number-" + std::to_string(i) + "\");\n";
+    }
+    sql += "SELECT COUNT(*) FROM t;\n";
+
+    Session s = run(sql);
+    ASSERT_EQ(s.exit_code, 0) << s.output;
+
+    EXPECT_FALSE(contains(s.output, "is full"))
+        << "Вставка упёрлась в размер страницы:\n" << s.output;
+
+    const json result = single_result(s);
+    ASSERT_EQ(result.size(), 1u) << s.output;
+    EXPECT_EQ(result[0]["COUNT(*)"], rows);
+}
+
+// ----------------------------------------------------------------------------
+// 18. Многостраничная таблица и её индекс переживают перезапуск.
+//
+//     Проверяется именно запись на диск: второй процесс не видел данных,
+//     записанных первым, иначе как прочитав файл.
+// ----------------------------------------------------------------------------
+TEST_F(CliTest, MultiPageTableSurvivesRestart) {
+    std::string sql =
+        "CREATE DATABASE big;\n"
+        "USE big;\n"
+        "CREATE TABLE t (id INT INDEXED, name STRING);\n";
+
+    const int rows = 400;
+    for (int i = 1; i <= rows; ++i) {
+        sql += "INSERT INTO t (id, name) VALUE (" + std::to_string(i) +
+               ", \"payload-" + std::to_string(i) + "\");\n";
+    }
+
+    Session writer = run(sql);
+    ASSERT_EQ(writer.exit_code, 0) << writer.output;
+
+    // Новый процесс: всё читается только с диска
+    Session reader = run(
+        "USE big;\n"
+        "SELECT COUNT(*) FROM t;\n"
+        "SELECT * FROM t WHERE id == 1;\n"
+        "SELECT * FROM t WHERE id == 399;\n");
+
+    const std::vector<json> r = extract_results(reader.output);
+    ASSERT_EQ(r.size(), 3u) << reader.output;
+
+    EXPECT_EQ(r[0][0]["COUNT(*)"], rows) << "Часть строк потерялась при перезапуске";
+
+    // Поиск идёт через B+ дерево: значит каталог индексов тоже лёг на диск
+    ASSERT_EQ(r[1].size(), 1u) << reader.output;
+    EXPECT_EQ(r[1][0]["name"], "payload-1");
+
+    ASSERT_EQ(r[2].size(), 1u) << "Строка с дальней страницы не найдена по индексу:\n" << reader.output;
+    EXPECT_EQ(r[2][0]["name"], "payload-399");
+}
+
+// ----------------------------------------------------------------------------
+// 19. Место удалённых строк переиспользуется, файл таблицы не растёт бесконечно
+// ----------------------------------------------------------------------------
+TEST_F(CliTest, DeletedRowsFreeSpaceForNewOnes) {
+    const int batch = 200;
+
+    std::string fill =
+        "CREATE DATABASE r;\n"
+        "USE r;\n"
+        "CREATE TABLE t (id INT, name STRING);\n";
+    for (int i = 1; i <= batch; ++i) {
+        fill += "INSERT INTO t (id, name) VALUE (" + std::to_string(i) +
+                ", \"padding-padding-" + std::to_string(i) + "\");\n";
+    }
+    ASSERT_EQ(run(fill).exit_code, 0);
+
+    const fs::path table_file = workdir / "data" / "r" / "t.dat";
+    ASSERT_TRUE(fs::exists(table_file)) << "Файл таблицы не найден: " << table_file;
+    const auto size_after_fill = fs::file_size(table_file);
+
+    // Освобождаем все строки и вставляем столько же новых
+    std::string refill = "USE r;\nDELETE FROM t;\n";
+    for (int i = batch + 1; i <= 2 * batch; ++i) {
+        refill += "INSERT INTO t (id, name) VALUE (" + std::to_string(i) +
+                  ", \"padding-padding-" + std::to_string(i) + "\");\n";
+    }
+    refill += "SELECT COUNT(*) FROM t;\n";
+
+    Session s = run(refill);
+    const json result = single_result(s);
+    ASSERT_EQ(result.size(), 1u) << s.output;
+    EXPECT_EQ(result[0]["COUNT(*)"], batch);
+
+    EXPECT_EQ(fs::file_size(table_file), size_after_fill)
+        << "Файл вырос, хотя новые строки должны были занять место удалённых";
+}
+
+// ----------------------------------------------------------------------------
+// 20. После UPDATE строка ищется по индексу, а не теряется в нём.
+//
+//     Раньше update удалял старый ключ из дерева и не добавлял новый:
+//     строка оставалась в куче, но выпадала из индекса.
+// ----------------------------------------------------------------------------
+TEST_F(CliTest, UpdateKeepsIndexInSync) {
+    Session s = run(R"SQL(
+CREATE DATABASE u;
+USE u;
+CREATE TABLE t (id INT INDEXED, name STRING);
+INSERT INTO t (id, name) VALUE (1, "a"), (2, "b"), (3, "c");
+UPDATE t SET name = "updated" WHERE id == 2;
+SELECT * FROM t WHERE id == 2;
+)SQL");
+
+    const json rows = single_result(s);
+    ASSERT_EQ(rows.size(), 1u) << "Обновлённая строка не найдена по индексу:\n" << s.output;
+    EXPECT_EQ(rows[0]["name"], "updated");
+
+    // И после перезапуска — тоже
+    Session after = run("USE u;\nSELECT * FROM t WHERE id == 2;\n");
+    const json again = single_result(after);
+    ASSERT_EQ(again.size(), 1u) << after.output;
+    EXPECT_EQ(again[0]["name"], "updated");
+}
+
+// ----------------------------------------------------------------------------
+// 21. Слишком длинный ключ отклоняется, а не создаёт строку-невидимку.
+//
+//     StringKey хранит не более 126 байт. Раньше ошибка индексации молча
+//     терялась: строка ложилась в кучу, но SELECT по индексу её не находил,
+//     хотя COUNT(*) считал.
+// ----------------------------------------------------------------------------
+TEST_F(CliTest, TooLongIndexedValueIsRejected) {
+    const std::string too_long(200, 'x');
+
+    Session s = run(
+        "CREATE DATABASE s;\n"
+        "USE s;\n"
+        "CREATE TABLE t (name STRING INDEXED, v INT);\n"
+        "INSERT INTO t (name, v) VALUE (\"" + too_long + "\", 1);\n"
+        "INSERT INTO t (name, v) VALUE (\"ok\", 2);\n"
+        "SELECT COUNT(*) FROM t;\n");
+
+    EXPECT_TRUE(contains(s.output, "126"))
+        << "Ожидалось сообщение об ограничении длины ключа:\n" << s.output;
+
+    const json result = single_result(s);
+    ASSERT_EQ(result.size(), 1u) << s.output;
+    EXPECT_EQ(result[0]["COUNT(*)"], 1)
+        << "Отклонённая строка всё-таки осталась в куче:\n" << s.output;
+}
