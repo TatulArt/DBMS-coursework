@@ -5,8 +5,9 @@
 
 class AccessLogger {
 public:
-    explicit AccessLogger(const std::string& path) : file_(path, std::ios::app) {}
-    void append(const LogRecord& record) {}
+    explicit AccessLogger(const std::string& path);
+    void append(const LogRecord& record);
+
 private:
     std::ofstream file_;
 };

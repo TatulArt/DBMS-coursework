@@ -1,0 +1,98 @@
+[2026.09.17-19:46:32.231 -> 2026.09.17-19:46:32.231] | Latency: 144 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: USE university;
+[2026.09.17-19:47:05.319 -> 2026.09.17-19:47:05.319] | Latency: 290 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students;
+[2026.09.17-19:47:52.894 -> 2026.09.17-19:47:52.894] | Latency: 91 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+INSERT INTO;
+[2026.09.17-20:30:54.640 -> 2026.09.17-20:30:54.640] | Latency: 392 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: USE university;
+[2026.09.17-20:30:59.99 -> 2026.09.17-20:30:59.100] | Latency: 160 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+ls
+;
+[2026.09.17-20:31:11.607 -> 2026.09.17-20:31:11.608] | Latency: 124 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+Sselect * from students;
+[2026.09.17-20:33:01.25 -> 2026.09.17-20:33:01.25] | Latency: 313 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: USE university;
+[2026.09.17-20:33:03.550 -> 2026.09.17-20:33:03.550] | Latency: 411 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students;
+[2026.09.17-20:33:06.821 -> 2026.09.17-20:33:06.822] | Latency: 349 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students;
+[2026.09.17-20:33:07.377 -> 2026.09.17-20:33:07.378] | Latency: 364 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students;
+[2026.09.17-20:33:07.853 -> 2026.09.17-20:33:07.853] | Latency: 358 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students;
+[2026.09.17-20:33:08.402 -> 2026.09.17-20:33:08.402] | Latency: 363 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students;
+[2026.09.17-20:33:08.921 -> 2026.09.17-20:33:08.921] | Latency: 380 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students;
+[2026.09.17-20:33:09.726 -> 2026.09.17-20:33:09.726] | Latency: 270 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students;
+[2026.09.17-20:33:11.658 -> 2026.09.17-20:33:11.658] | Latency: 413 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students;
+[2026.09.17-20:38:17.566 -> 2026.09.17-20:38:17.567] | Latency: 396 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: USE university;
+[2026.09.17-20:39:50.324 -> 2026.09.17-20:39:50.325] | Latency: 565 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+
+
+
+
+
+USE
+;
+[2026.09.17-20:39:52.624 -> 2026.09.17-20:39:52.624] | Latency: 140 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+;
+[2026.09.17-20:43:07.266 -> 2026.09.17-20:43:07.266] | Latency: 346 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: hello
+;
+[2026.09.17-20:43:13.304 -> 2026.09.17-20:43:13.305] | Latency: 167 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+USE university;
+[2026.09.17-20:43:35.959 -> 2026.09.17-20:43:35.959] | Latency: 342 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students;
+[2026.09.17-20:43:53.534 -> 2026.09.17-20:43:53.535] | Latency: 222 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+USe;
+[2026.09.17-20:43:56.776 -> 2026.09.17-20:43:56.776] | Latency: 221 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+d
+d
+d
+d
+d
+d
+;
+[2026.09.17-20:43:57.758 -> 2026.09.17-20:43:57.758] | Latency: 122 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+;
+[2026.09.17-20:43:58.280 -> 2026.09.17-20:43:58.280] | Latency: 170 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+;
+[2026.09.17-20:43:58.504 -> 2026.09.17-20:43:58.505] | Latency: 131 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+;
+[2026.09.17-20:43:58.754 -> 2026.09.17-20:43:58.754] | Latency: 182 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+;
+[2026.09.17-20:43:58.984 -> 2026.09.17-20:43:58.984] | Latency: 171 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+;
+[2026.09.17-20:43:59.218 -> 2026.09.17-20:43:59.218] | Latency: 147 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+;
+[2026.09.17-20:43:59.451 -> 2026.09.17-20:43:59.451] | Latency: 114 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+;
+[2026.09.17-20:43:59.708 -> 2026.09.17-20:43:59.708] | Latency: 120 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+;
+[2026.09.17-20:43:59.921 -> 2026.09.17-20:43:59.921] | Latency: 148 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+;
+[2026.09.17-20:44:00.135 -> 2026.09.17-20:44:00.135] | Latency: 115 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+;
+[2026.09.17-20:44:00.378 -> 2026.09.17-20:44:00.378] | Latency: 200 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+;
+[2026.09.17-20:44:00.650 -> 2026.09.17-20:44:00.650] | Latency: 176 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+;
+[2026.09.17-20:44:00.888 -> 2026.09.17-20:44:00.888] | Latency: 134 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+;
+[2026.09.17-20:44:01.130 -> 2026.09.17-20:44:01.130] | Latency: 236 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+;
+[2026.09.17-20:44:01.371 -> 2026.09.17-20:44:01.371] | Latency: 135 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+;
+[2026.09.17-20:44:01.633 -> 2026.09.17-20:44:01.633] | Latency: 133 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+;
+[2026.09.17-20:44:01.883 -> 2026.09.17-20:44:01.883] | Latency: 124 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+;
+[2026.09.17-20:44:02.132 -> 2026.09.17-20:44:02.132] | Latency: 164 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+;
+[2026.09.17-20:44:02.390 -> 2026.09.17-20:44:02.390] | Latency: 136 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+;
+[2026.09.17-20:44:14.55 -> 2026.09.17-20:44:14.55] | Latency: 167 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+;
+[2026.09.17-20:47:13.151 -> 2026.09.17-20:47:13.152] | Latency: 325 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: USE university;
+[2026.09.17-20:47:23.522 -> 2026.09.17-20:47:23.522] | Latency: 154 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+ls;
