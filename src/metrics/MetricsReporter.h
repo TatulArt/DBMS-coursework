@@ -15,20 +15,17 @@ public:
 
     // Метод старта фонового демона (вызывается в DBMSEngine)
     void start(std::function<void(const std::string&)> callback) {
+        MetricsCollector::instance().setReportIntervalSeconds(
+            static_cast<int>(interval_.count()));
         is_running_ = true;
         worker_thread_ = std::thread([this, callback]() {
             while (is_running_) {
-                // Фоновый поток засыпает строго на 10 секунд по ТЗ!
                 std::this_thread::sleep_for(interval_);
-                
                 if (!is_running_) break;
-
-                // Просыпаемся, забираем живые цифры из коллектора и отдаем в std::cout энджина
-                std::string stats = MetricsCollector::instance().getStats();
-                callback(stats);
+                callback(MetricsCollector::instance().getStats());
             }
         });
-    }
+}
 
     void stop() {
         if (is_running_) {

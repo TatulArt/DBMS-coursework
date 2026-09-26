@@ -16,8 +16,8 @@ using Row = std::vector<std::pair<std::string, Value>>;
 struct QueryResult {
     bool ok = true;
     std::string error;
-    std::vector<Row> rows; // SELECTed rows
-    int affected = 0; // info about INSERT/UPDATE/DELETE
+    std::vector<Row> rows;
+    int affected = 0;
 };
 class Executor {
 public:
@@ -50,11 +50,12 @@ private:
 
     Database& currentDatabase();
 
-    // Использует resolve, чтобы вычислить обе стороны условия WHERE, обходя
-    // дерево рекурсивно
     bool matches(const std::vector<Value>& record, const Schema& schema, const ASTNode* where);
 
     Value resolve(const ASTNode* node, const std::vector<Value>& record, const Schema& schema);
+
+    static RecordId findRowForRevert(Table& tbl, const Schema& schema,
+                                     const std::vector<Value>& row);
 
     static Row project(const std::vector<Value>& record, const Schema& schema,
                        const SelectQuery& q);

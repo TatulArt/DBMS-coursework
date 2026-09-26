@@ -1,5 +1,6 @@
 #include "engine/Executor.h"
 #include <cstdint>
+#include <ctime>
 #include <regex>
 #include <iostream>
 #include "undo-log/UndoLogManager.h"
@@ -87,25 +88,21 @@ QueryResult Executor::execCreateTable(const CreateTableQuery& q) {
     return {true, "", {}, 0};
 }
 
-
 QueryResult Executor::execDropTable(const DropTableQuery& q) {
     currentDatabase().dropTable(q.tableName);
     return {true, "", {}, 0};
 }
 
 QueryResult Executor::execInsert(const InsertQuery& q) {
-    
     Database& db = currentDatabase();
     Table& tbl = db.getTable(q.tableName);
     const Schema& schema = tbl.schema();
 
     int affected = 0;
-    
-    // Пакетный обход строк, которые передал твой парсер выражений (rowAst)
+
     for (const auto& rowAst : q.values) {
         std::vector<Value> record(schema.columns.size(), Value::Null());
 
-        // 1. Маппим пришедшие AST-узлы (Literal) в физический вектор полей Value
         if (q.columns.empty()) {
             for (size_t i = 0; i < rowAst.size() && i < schema.columns.size(); ++i) {
                 auto* lit = dynamic_cast<const Literal*>(rowAst[i].get());
@@ -123,7 +120,6 @@ QueryResult Executor::execInsert(const InsertQuery& q) {
             }
         }
 
-        // 2. Обработка констрейнтов NOT NULL и подстановка DEFAULT значений
         for (size_t i = 0; i < schema.columns.size(); ++i) {
             if (!(record[i]).is_null()) continue;
 
@@ -131,32 +127,23 @@ QueryResult Executor::execInsert(const InsertQuery& q) {
             if (!col.default_value.is_null()) {
                 record[i] = col.default_value;
             } else if (!col.is_nullable) {
-                // Возвращаем красивую ошибку в консоль вместо аварийного падения!
                 return {false, "Constraint Violation: Column '" + col.name + "' cannot be NULL", {}, affected};
             }
         }
 
-        // 3. ЖЁСТКАЯ ПРОВЕРКА УНИКАЛЬНОСТИ ИНДЕКСОВ НА ДИСКЕ (Защита от дубликатов)
-        // Итерируемся по колонкам и ищем, нет ли дубликатов в B+ дереве твоего товарища
         try {
-            // Если у таблицы инициализирован indexManager_, проверяем уникальность по B+ дереву
-            // (в types.h флаг называется ColumnDef::is_indexed)
             for (size_t i = 0; i < schema.columns.size(); ++i) {
                 if (schema.columns[i].is_indexed) {
                     std::string idxName = "idx_" + q.tableName + "_" + schema.columns[i].name;
-                    
-                    // Делаем пробный поиск по индексу. Если ключ найден — это дубликат!
+
                     try {
                         RecordID rid = tbl.findByIndex(schema.columns[i].name, record[i]);
-                        // Если строка выше не бросила исключение, значит ключ СУЩЕСТВУЕТ -> Блокируем!
                         return {false, "Constraint Violation: Duplicate value for indexed column '" + schema.columns[i].name + "'", {}, affected};
                     } catch (...) {
-                        // Исключение означает, что ключа нет в B+ дереве. Это отлично, идем дальше!
                     }
                 }
             }
 
-            // 4. Физическая вставка на диск и автоматическая регистрация ключа в B+ дереве
             tbl.insert(record);
 
         } catch (const std::exception& e) {
@@ -164,19 +151,17 @@ QueryResult Executor::execInsert(const InsertQuery& q) {
         } catch (...) {
             return {false, "Unknown critical storage error during insert", {}, affected};
         }
-        
-        // 5. Логирование транзакции в Undo-Log для поддержки REVERT
+
         if (undoLog_) {
-            auto keys = serializeKey(record, schema);
+            auto afterRow = serializeRow(record);
             undoLog_->logUndoInsert(currentDb_ + "." + q.tableName,
-                                    UndoLogManager::getCurrentTimeMs(), keys);
+                                    UndoLogManager::getCurrentTimeMs(), afterRow);
         }
         affected++;
     }
 
     return {true, "", {}, affected};
 }
-
 
 QueryResult Executor::execDelete(const DeleteQuery& q) {
     Database& db = currentDatabase();
@@ -194,10 +179,11 @@ QueryResult Executor::execDelete(const DeleteQuery& q) {
     for (auto recordID: toDelete) {
         if (undoLog_) {
             auto old = tbl.fetch(recordID);
-            auto keys = serializeKey(old, schema);
-            auto rowData = serializeRow(old);
+            auto beforeRow = serializeRow(old);
             undoLog_->logUndoDelete(currentDb_ + "." + q.tableName,
-                                    UndoLogManager::getCurrentTimeMs(), keys, rowData);
+                                    UndoLogManager::getCurrentTimeMs(),
+                                    {},
+                                    beforeRow);
         }
         tbl.remove(recordID);
         affected++;
@@ -231,10 +217,12 @@ QueryResult Executor::execUpdate(const UpdateQuery& q) {
     for (auto& [recordID, newRecord]: toUpdate) {
         if (undoLog_) {
             auto old = tbl.fetch(recordID);
-            auto keys = serializeKey(old, schema);
-            auto rowData = serializeRow(old);
+            auto beforeRow = serializeRow(old);
+            auto afterRow = serializeRow(newRecord);
             undoLog_->logUndoUpdate(currentDb_ + "." + q.tableName,
-                                    UndoLogManager::getCurrentTimeMs(), keys, rowData);
+                                    UndoLogManager::getCurrentTimeMs(),
+                                    afterRow,
+                                    beforeRow);
         }
         tbl.update(recordID, newRecord);
         affected++;
@@ -428,8 +416,6 @@ bool Executor::matches(const std::vector<Value>& record, const Schema& schema,
             if ((low).is_null() || (val).is_null() || (high).is_null())
                 return false;
 
-            // По заданию BETWEEN задаёт полуоткрытый интервал [low, high):
-            // верхняя граница не включается.
             return val >= low && val < high;
         }
         case NodeKind::LIKE_OP: {
@@ -523,10 +509,28 @@ std::vector<Value> Executor::deserializeRow(const std::vector<uint8_t>& buf) {
 
 std::vector<uint8_t> Executor::serializeKey(const std::vector<Value>& record,
                                             const Schema& schema) {
-    int idxCol = schema.indexedColumn();
-    if (idxCol != -1)
-        return serializeRow({record[idxCol]});
+    (void)schema;
     return serializeRow(record);
+}
+
+RecordId Executor::findRowForRevert(Table& tbl, const Schema& schema,
+                                    const std::vector<Value>& row) {
+    int idxCol = schema.indexedColumn();
+    if (idxCol != -1 && idxCol < static_cast<int>(row.size())
+        && !row[idxCol].is_null()) {
+        try {
+            return tbl.findByIndex(schema.columns[idxCol].name, row[idxCol]);
+        } catch (const std::exception&) {
+        }
+    }
+
+    RecordId found{INVALID_PAGE_ID, 0};
+    tbl.scan([&](RecordId rid, const std::vector<Value>& vals) {
+        if (found.page_id == INVALID_PAGE_ID && vals == row) {
+            found = rid;
+        }
+    });
+    return found;
 }
 
 static uint64_t parseTimestamp(const std::string& ts) {
@@ -544,13 +548,19 @@ static uint64_t parseTimestamp(const std::string& ts) {
     t.tm_hour = hour;
     t.tm_min = min;
     t.tm_sec = sec;
-    t.tm_isdst = -1;
+    t.tm_isdst = 0;
 
     std::time_t epoch = std::mktime(&t);
     if (epoch == -1)
         throw SemanticError("Cannot convert timestamp: " + ts);
 
-    return static_cast<uint64_t>(epoch) * 1000ULL + ms;
+    uint64_t result = static_cast<uint64_t>(epoch) * 1000ULL + ms;
+    std::cerr << "[REVERT] parsed '" << ts << "' -> " << result << "\n";
+    std::cerr << "[TIME] parsed '" << ts
+          << "' -> year=" << year << " month=" << month << " day=" << day
+          << " hour=" << hour << " min=" << min << " sec=" << sec << " ms=" << ms
+          << " -> epoch=" << epoch << " -> result=" << result << "\n";
+    return result;
 }
 
 QueryResult Executor::execRevert(const RevertQuery& q) {
@@ -570,37 +580,36 @@ QueryResult Executor::execRevert(const RevertQuery& q) {
     for (const auto& rec: records) {
         switch (rec.actionType) {
             case RevertActionType::REVERT_INSERT: {
-                auto key = deserializeRow(rec.keys);
-                int idxCol = schema.indexedColumn();
-
-                if (idxCol == -1)
-                    throw SemanticError("Cannot revert INSERT without indexed column");
-
-                RecordId rid = tbl.findByIndex(schema.columns[idxCol].name, key[0]);
-                tbl.remove(rid);
+                if (rec.afterRow.empty()) break;
+                auto afterRow = deserializeRow(rec.afterRow);
+                RecordId rid = findRowForRevert(tbl, schema, afterRow);
+                if (rid.page_id != INVALID_PAGE_ID) {
+                    tbl.remove(rid);
+                    affected++;
+                }
                 break;
             }
 
             case RevertActionType::REVERT_DELETE: {
-                auto row = deserializeRow(rec.oldRowData);
-                tbl.insert(row);
+                if (rec.beforeRow.empty()) break;
+                auto beforeRow = deserializeRow(rec.beforeRow);
+                tbl.insert(beforeRow);
+                affected++;
                 break;
             }
 
             case RevertActionType::REVERT_UPDATE: {
-                auto oldRow = deserializeRow(rec.oldRowData);
-                auto key = deserializeRow(rec.keys);
-                int idxCol = schema.indexedColumn();
-
-                if (idxCol == -1)
-                    throw SemanticError("Cannot revert UPDATE without indexed column");
-
-                RecordId rid = tbl.findByIndex(schema.columns[idxCol].name, key[0]);
-                tbl.update(rid, oldRow);
+                if (rec.afterRow.empty() || rec.beforeRow.empty()) break;
+                auto afterRow = deserializeRow(rec.afterRow);
+                auto beforeRow = deserializeRow(rec.beforeRow);
+                RecordId rid = findRowForRevert(tbl, schema, afterRow);
+                if (rid.page_id != INVALID_PAGE_ID) {
+                    tbl.update(rid, beforeRow);
+                    affected++;
+                }
                 break;
             }
         }
-        affected++;
     }
 
     undoLog_->truncateLog(timeMs);
