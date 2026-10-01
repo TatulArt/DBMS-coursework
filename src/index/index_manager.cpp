@@ -625,6 +625,28 @@ Status IndexManager::range_scan_half_open(const std::string& index_name,
     return make_tree<StringKey>(info).scan_range_half_open(lo.value(), hi.value(), result);
 }
 
+Status IndexManager::range_scan_open_low(const std::string& index_name,
+                                          const Value& low_key, const Value& high_key,
+                                          std::vector<RecordId>& result) {
+    auto info_res = lookup(index_name);
+    if (!info_res.ok()) return info_res.status();
+    IndexInfo& info = *info_res.value();
+
+    if (info.key_type == ColumnType::Int) {
+        auto lo = to_int_key(low_key);
+        auto hi = to_int_key(high_key);
+        if (!lo.ok()) return lo.status();
+        if (!hi.ok()) return hi.status();
+        return make_tree<int32_t>(info).scan_range_open_low(lo.value(), hi.value(), result);
+    }
+
+    auto lo = to_string_key(low_key);
+    auto hi = to_string_key(high_key);
+    if (!lo.ok()) return lo.status();
+    if (!hi.ok()) return hi.status();
+    return make_tree<StringKey>(info).scan_range_open_low(lo.value(), hi.value(), result);
+}
+
 Status IndexManager::full_scan(const std::string& index_name, std::vector<RecordId>& result) {
     auto info_res = lookup(index_name);
     if (!info_res.ok()) return info_res.status();

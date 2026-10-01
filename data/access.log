@@ -287,3 +287,76 @@ SELECT * FROM students;
 revert students 2026.09.21-15:03:36.000000;
 [2026.09.21-15:05:02.684 -> 2026.09.21-15:05:02.685] | Latency: 447 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
 SELECT * FROM students;
+[2026.09.30-18:57:42.3 -> 2026.09.30-18:57:42.3] | Latency: 506 us | ClientID: interactive_session | HandlerID: executor | Status: INTERNAL_ERROR | Query: USE univers;
+[2026.09.30-18:57:45.273 -> 2026.09.30-18:57:45.274] | Latency: 187 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+USE university;
+[2026.09.30-18:57:46.740 -> 2026.09.30-18:57:46.740] | Latency: 90 us | ClientID: interactive_session | HandlerID: executor | Status: INTERNAL_ERROR | Query: 
+USE univers;
+[2026.09.30-18:57:51.462 -> 2026.09.30-18:57:51.462] | Latency: 265 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students;
+[2026.09.30-18:57:52.129 -> 2026.09.30-18:57:52.129] | Latency: 306 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students;
+[2026.09.30-18:57:52.814 -> 2026.09.30-18:57:52.814] | Latency: 243 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students;
+[2026.09.30-18:57:56.302 -> 2026.09.30-18:57:56.302] | Latency: 289 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students;
+[2026.09.30-18:58:01.765 -> 2026.09.30-18:58:01.765] | Latency: 288 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students;
+[2026.09.30-18:58:02.315 -> 2026.09.30-18:58:02.315] | Latency: 183 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students;
+[2026.09.30-18:58:02.822 -> 2026.09.30-18:58:02.822] | Latency: 272 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students;
+[2026.09.30-18:58:03.294 -> 2026.09.30-18:58:03.294] | Latency: 152 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students;
+[2026.09.30-18:58:03.801 -> 2026.09.30-18:58:03.801] | Latency: 159 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students;
+[2026.09.30-18:58:04.295 -> 2026.09.30-18:58:04.295] | Latency: 160 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students;
+[2026.09.30-18:58:04.925 -> 2026.09.30-18:58:04.926] | Latency: 287 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students;
+[2026.09.30-18:58:05.457 -> 2026.09.30-18:58:05.458] | Latency: 351 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students;
+[2026.09.30-18:58:06.23 -> 2026.09.30-18:58:06.23] | Latency: 389 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students;
+[2026.09.30-18:58:06.585 -> 2026.09.30-18:58:06.586] | Latency: 243 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students;
+[2026.10.01-20:35:30.957 -> 2026.10.01-20:35:30.958] | Latency: 353 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: use university;
+[2026.10.01-20:35:41.635 -> 2026.10.01-20:35:41.635] | Latency: 365 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students WHERE id == 1
+;
+[2026.10.01-20:35:49.204 -> 2026.10.01-20:35:49.205] | Latency: 966 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students WHERE id BETWEEN 1 AND 3;
+[2026.10.01-20:35:56.449 -> 2026.10.01-20:35:56.449] | Latency: 329 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students WHERE id > 1;
+[2026.10.01-20:36:05.329 -> 2026.10.01-20:36:05.329] | Latency: 311 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students WHERE id >= 2
+;
+[2026.10.01-20:36:15.905 -> 2026.10.01-20:36:15.905] | Latency: 275 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students WHERE id < 3
+;
+[2026.10.01-20:36:25.761 -> 2026.10.01-20:36:25.761] | Latency: 296 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students WHERE id <= 2
+;
+[2026.10.01-20:51:32.951 -> 2026.10.01-20:51:32.953] | Latency: 1569 us | ClientID: interactive_session | HandlerID: executor | Status: INTERNAL_ERROR | Query: SELECT * FROM students WHERE id > 1;
+[2026.10.01-20:51:39.373 -> 2026.10.01-20:51:39.373] | Latency: 76 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query:       -- [PLAN] IndexRange id > 1
+use university;
+[2026.10.01-20:51:52.927 -> 2026.10.01-20:51:52.927] | Latency: 107 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+use university;
+[2026.10.01-20:51:57.290 -> 2026.10.01-20:51:57.291] | Latency: 322 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students WHERE id > 1;
+[2026.10.01-20:52:08.183 -> 2026.10.01-20:52:08.183] | Latency: 369 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students WHERE name > "A";
+[2026.10.01-20:52:17.910 -> 2026.10.01-20:52:17.911] | Latency: 1071 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students WHERE id BETWEEN 1 AND 3;
+[2026.10.01-20:52:28.14 -> 2026.10.01-20:52:28.14] | Latency: 294 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students WHERE id > 1;
+[2026.10.01-20:52:47.71 -> 2026.10.01-20:52:47.72] | Latency: 384 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT * FROM students WHERE name == "Ivan";
+[2026.10.01-20:55:33.382 -> 2026.10.01-20:55:33.382] | Latency: 217 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: use university;
+[2026.10.01-20:55:35.673 -> 2026.10.01-20:55:35.674] | Latency: 511 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+SELECT COUNT(score) FROM students;
+[2026.10.01-20:55:46.163 -> 2026.10.01-20:55:46.163] | Latency: 288 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query:   
+SELECT SUM(score) FROM students;
+[2026.10.01-22:57:04.992 -> 2026.10.01-22:57:04.992] | Latency: 598 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: Use university;
+[2026.10.01-22:57:15.128 -> 2026.10.01-22:57:15.128] | Latency: 160 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+USE university;

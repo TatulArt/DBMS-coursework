@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <fstream>
 #include "engine/Executor.h"
 #include "logger/AccessLogger.h"
 #include "metrics/MetricsReporter.h"
@@ -26,6 +27,7 @@ namespace dbms {
         Executor executor_;
         SqlParser parser_;
         MetricsReporter reporter_{std::chrono::seconds(10)};
+        std::ofstream metricsFile_;  
     };
 
 } // namespace dbms

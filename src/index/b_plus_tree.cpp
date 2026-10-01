@@ -707,6 +707,29 @@ Status BPlusTreeT<KeyT>::scan_range_half_open(const KeyT& low_key, const KeyT& h
     return Status::OK();
 }
 
+template <typename KeyT>
+Status BPlusTreeT<KeyT>::scan_range_open_low(const KeyT& low_key, const KeyT& high_key,
+                                              std::vector<RecordId>& result) {
+    result.clear();
+    if (low_key >= high_key) {
+        return Status::OK();
+    }
+    const IndexIteratorT<KeyT> stop = end();
+    auto it = lower_bound(low_key);
+    // Пропускаем первый ключ, если он равен low_key: это строгое >
+    if (it != stop && (*it).first == low_key) {
+        ++it;
+    }
+    for (; it != stop; ++it) {
+        auto [key, rid] = *it;
+        if (key >= high_key) {
+            break;
+        }
+        result.push_back(rid);
+    }
+    return Status::OK();
+}
+
 // ----------------------------------------------------------------------------
 // Удаление
 // ----------------------------------------------------------------------------

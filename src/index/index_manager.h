@@ -96,6 +96,12 @@ public:
                                 const Value& low_key, const Value& high_key,
                                 std::vector<RecordId>& result);
 
+    // Диапазон (low_key, high_key) — обе границы исключены.
+    // Используется для строгих > и <.
+    Status range_scan_open_low(const std::string& index_name,
+                                const Value& low_key, const Value& high_key,
+                                std::vector<RecordId>& result);
+                                
     // Полный обход индекса в порядке возрастания ключей
     Status full_scan(const std::string& index_name, std::vector<RecordId>& result);
 

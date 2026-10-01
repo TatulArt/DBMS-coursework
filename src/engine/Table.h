@@ -34,6 +34,13 @@ public:
     void remove(RecordID rid);
     std::vector<Value> fetch(RecordID rid);
 
+    // Диапазонный поиск по INDEXED-колонке.
+    // include_low — включать ли low в результат (для > — false, для >= — true).
+    // high всегда исключается (для < и <= верхнюю границу обрабатывает Executor).
+    Result<std::vector<Record>> rangeScan(const std::string& colName,
+                                          const Value& low, const Value& high,
+                                          bool include_low = true);
+
     ~Table();
 
 private:

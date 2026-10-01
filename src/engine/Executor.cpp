@@ -236,28 +236,136 @@ QueryResult Executor::execSelect(const SelectQuery& q) {
     Table& tbl = db.getTable(q.tableName);
     const Schema& schema = tbl.schema();
 
+    // ========== БЫСТРЫЙ ПУТЬ ЧЕРЕЗ ИНДЕКС ==========
+    // Работает, только если есть INDEXED-колонка и q.where — простое условие:
+    // либо column OP literal, либо column BETWEEN low AND high.
     if (int idxCol = schema.indexedColumn();
-        idxCol != -1 && q.where && q.where->kind == NodeKind::BINARY_OP) {
-        auto* bin = dynamic_cast<const BinaryOp*>(q.where.get());
-        if (bin->op == "==") {
+        idxCol != -1 && q.where) {
+
+        // Вспомогательная лямбда: проверить, что узел — ссылка на индекс-колонку,
+        // а второй операнд — литерал. Возвращает true и значение, если подходит.
+        auto try_extract_indexed = [&](const ASTNode* colNode, const ASTNode* valNode,
+                                        Value& outValue) -> bool {
+            if (colNode->kind != NodeKind::COLUMN_REF) return false;
+            auto* ref = dynamic_cast<const ColumnRef*>(colNode);
+            if (schema.columnIndex(ref->name) != idxCol) return false;
+            outValue = resolve(valNode, {}, schema);
+            return true;
+        };
+
+        // --- BINARY_OP: ==, !=, <, >, <=, >= ---
+        if (q.where->kind == NodeKind::BINARY_OP) {
+            auto* bin = dynamic_cast<const BinaryOp*>(q.where.get());
+
             bool leftIsCol = bin->left->kind == NodeKind::COLUMN_REF;
             bool rightIsCol = bin->right->kind == NodeKind::COLUMN_REF;
-            const ASTNode* colNode = leftIsCol ? bin->left.get() : bin->right.get();
-            const ASTNode* valNode = leftIsCol ? bin->right.get() : bin->left.get();
 
-            if (!rightIsCol || !leftIsCol) {
-                auto* ref = dynamic_cast<const ColumnRef*>(colNode);
-                if (schema.columnIndex(ref->name) == idxCol) {
-                    Value key = resolve(valNode, {}, schema);
+            // Нас интересует только случай column OP literal (не literal OP column, не col OP col)
+            if (leftIsCol != rightIsCol) {
+                const ASTNode* colNode = leftIsCol ? bin->left.get() : bin->right.get();
+                const ASTNode* valNode = leftIsCol ? bin->right.get() : bin->left.get();
+
+                Value key;
+                if (try_extract_indexed(colNode, valNode, key)) {
+                    // Нормализуем оператор для случая literal OP column: при < и > знак меняется
+                    std::string op = bin->op;
+                    if (!leftIsCol) {
+                        if (op == "<") op = ">";
+                        else if (op == ">") op = "<";
+                        else if (op == "<=") op = ">=";
+                        else if (op == ">=") op = "<=";
+                    }
+
                     try {
-                        RecordId recordID = tbl.findByIndex(ref->name, key);
-                        auto record = tbl.fetch(recordID);
-                        std::vector<Row> rows;
-                        if (q.aggregates.empty())
-                            rows.push_back(project(record, schema, q));
-                        return {true, "", rows, 0};
+                        if (op == "==") {
+                            RecordId rid = tbl.findByIndex(schema.columns[idxCol].name, key);
+                            auto record = tbl.fetch(rid);
+                            std::vector<Row> rows;
+                            if (q.aggregates.empty())
+                                rows.push_back(project(record, schema, q));
+                            // std::cerr << "[PLAN] IndexLookup " << schema.columns[idxCol].name
+                            //           << " == " << key.to_string() << "\n";
+                            return {true, "", rows, 0};
+                        }
+
+                        // Границы для INT и STRING
+                        Value lo, hi;
+                        bool include_low = true;
+                        if (schema.columns[idxCol].type == ColumnType::Int) {
+                            lo = Value(std::numeric_limits<int32_t>::min());
+                            hi = Value(std::numeric_limits<int32_t>::max());
+                        } else {
+                            lo = Value(std::string(""));
+                            hi = Value(std::string(100, char(127)));
+                        }
+
+                        if (op == ">")       { lo = key; include_low = false; }
+                        else if (op == ">=") { lo = key; include_low = true;  }
+                        else if (op == "<")  { hi = key; /* high исключается */ }
+                        else if (op == "<=") { hi = key; /* high исключается */ }
+
+                        auto recs = tbl.rangeScan(schema.columns[idxCol].name, lo, hi, include_low);
+                        if (recs.ok()) {
+                            std::vector<Row> rows;
+                            if (!q.aggregates.empty()) {
+                                // агрегаты с индексом — редко, но пусть работает через matches
+                                for (auto& r : recs.value()) {
+                                    if (matches(r.fields, schema, q.where.get()))
+                                        rows.push_back(project(r.fields, schema, q));
+                                }
+                            } else {
+                                for (auto& r : recs.value()) {
+                                    if (op == "<" || op == "<=") {
+                                        // high исключается индексом; для <= надо добавить == key
+                                        if (op == "<=") {
+                                            // дополнительно вытащим равные через findByIndex
+                                            // — но проще проверить через matches, что и делаем ниже
+                                        }
+                                    }
+                                    if (matches(r.fields, schema, q.where.get()))
+                                        rows.push_back(project(r.fields, schema, q));
+                                }
+                                // для <= догружаем записи с == key
+                                if (op == "<=") {
+                                    try {
+                                        RecordId rid = tbl.findByIndex(schema.columns[idxCol].name, key);
+                                        auto record = tbl.fetch(rid);
+                                        rows.push_back(project(record, schema, q));
+                                    } catch (...) { /* нет такой записи */ }
+                                }
+                            }
+                            // std::cerr << "[PLAN] IndexRange " << schema.columns[idxCol].name
+                            //           << " " << op << " " << key.to_string() << "\n";
+                            return {true, "", rows, 0};
+                        }
                     } catch (const IndexError&) {
                         return {true, "", {}, 0};
+                    } catch (const std::exception&) {
+                        // падаем в полный скан
+                    }
+                }
+            }
+        }
+        // --- BETWEEN_OP ---
+        else if (q.where->kind == NodeKind::BETWEEN_OP) {
+            auto* btw = dynamic_cast<const BetweenOp*>(q.where.get());
+            if (btw->expr && btw->expr->kind == NodeKind::COLUMN_REF) {
+                auto* ref = dynamic_cast<const ColumnRef*>(btw->expr.get());
+                if (schema.columnIndex(ref->name) == idxCol) {
+                    try {
+                        Value low = resolve(btw->low.get(), {}, schema);
+                        Value high = resolve(btw->high.get(), {}, schema);
+                        auto recs = tbl.rangeScan(ref->name, low, high, /*include_low=*/true);
+                        if (recs.ok()) {
+                            std::vector<Row> rows;
+                            for (auto& r : recs.value())
+                                rows.push_back(project(r.fields, schema, q));
+                            // std::cerr << "[PLAN] IndexRange BETWEEN " << low.to_string()
+                            //           << " AND " << high.to_string() << "\n";
+                            return {true, "", rows, 0};
+                        }
+                    } catch (const std::exception&) {
+                        // падаем в полный скан
                     }
                 }
             }
@@ -313,6 +421,7 @@ QueryResult Executor::execSelect(const SelectQuery& q) {
     }
 
     std::vector<Row> rows;
+    // std::cerr << "[PLAN] FullScan\n";  
     tbl.scan([&](RecordId, const std::vector<Value>& record) {
         if (matches(record, schema, q.where.get()))
             rows.push_back(project(record, schema, q));
@@ -553,13 +662,8 @@ static uint64_t parseTimestamp(const std::string& ts) {
     std::time_t epoch = std::mktime(&t);
     if (epoch == -1)
         throw SemanticError("Cannot convert timestamp: " + ts);
-
-    uint64_t result = static_cast<uint64_t>(epoch) * 1000ULL + ms;
-    std::cerr << "[REVERT] parsed '" << ts << "' -> " << result << "\n";
-    std::cerr << "[TIME] parsed '" << ts
-          << "' -> year=" << year << " month=" << month << " day=" << day
-          << " hour=" << hour << " min=" << min << " sec=" << sec << " ms=" << ms
-          << " -> epoch=" << epoch << " -> result=" << result << "\n";
+    uint64_t millis = static_cast<uint64_t>(ms) / 1000; 
+    uint64_t result = static_cast<uint64_t>(epoch) * 1000ULL + millis;
     return result;
 }
 

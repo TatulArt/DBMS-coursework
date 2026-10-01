@@ -1,4 +1,5 @@
 #include "engine/DBMS_Engine.h"
+#include <unistd.h>
 #include <iostream>
 #include "engine/Executor.h"
 #include "logger/AccessLogger.h"
@@ -9,7 +10,15 @@ namespace dbms {
     DBMSEngine::DBMSEngine(const std::string& logFilePath) :
         logger_(logFilePath), undoLogManager_("./data/undo.log"), executor_(&undoLogManager_),
         reporter_{std::chrono::seconds(10)} {
-        reporter_.start([](const std::string& stats) { std::cout << stats; });
+
+        // Открываем файл для телеметрии в режиме дозаписи
+        metricsFile_.open("./data/metrics.log", std::ios::app);
+
+        reporter_.start([this](const std::string& stats) {
+            if (metricsFile_.is_open()) {
+                metricsFile_ << stats << std::flush;
+            }
+        });
     }
 
 

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <algorithm>
 #include "../types.h"
@@ -92,4 +93,29 @@ static_assert(sizeof(StringKey) % 4 == 0, "Размер ключа должен 
 
 inline std::string key_to_string(const StringKey& key) {
     return key.to_std_string();
+}
+
+// ============================================================================
+// Границы для диапазонных запросов: используются, чтобы свести любое условие
+// сравнения к [low, high). Для INT — INT_MIN/INT_MAX; для StringKey —
+// пустая строка и строка из максимума байтов.
+// ============================================================================
+
+inline int32_t min_key_value(int32_t) {
+    return std::numeric_limits<int32_t>::min();
+}
+
+inline int32_t max_key_value(int32_t) {
+    return std::numeric_limits<int32_t>::max();
+}
+
+inline StringKey min_key_value(const StringKey&) {
+    return StringKey{};   // пустая строка
+}
+
+inline StringKey max_key_value(const StringKey&) {
+    StringKey k;
+    k.length = StringKey::MAX_LENGTH;
+    std::memset(k.data, 0x7F, StringKey::MAX_LENGTH);
+    return k;
 }

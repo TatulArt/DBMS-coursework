@@ -198,6 +198,11 @@ public:
     // Поиск диапазона [low_key, high_key) — семантика BETWEEN из задания
     Status scan_range_half_open(const KeyT& low_key, const KeyT& high_key, std::vector<RecordId>& result);
 
+    // Диапазон [low_key, high_key), пропуская low_key, если он есть в дереве.
+    // Используется для строгих операторов > и <, чтобы исключить саму границу.
+    Status scan_range_open_low(const KeyT& low_key, const KeyT& high_key,
+                                std::vector<RecordId>& result);
+
     // Удаление ключа из дерева
     Status remove(const KeyT& key);
 

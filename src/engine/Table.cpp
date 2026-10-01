@@ -171,6 +171,46 @@ RecordID Table::findByIndex(const std::string& colName, const Value& key) {
     return res.value();
 }
 
+Result<std::vector<Record>> Table::rangeScan(const std::string& colName,
+                                              const Value& low, const Value& high,
+                                              bool include_low) {
+    requireUsable();
+
+    int idxCol = schema_.columnIndex(colName);
+    if (idxCol == -1) {
+        return Result<std::vector<Record>>(
+            Status::Error(StatusCode::ColumnNotFound, "Unknown column: " + colName));
+    }
+    if (!schema_.columns[idxCol].is_indexed) {
+        return Result<std::vector<Record>>(
+            Status::Error(StatusCode::InvalidArgument, "Column is not indexed: " + colName));
+    }
+
+    std::string idxName = "idx_" + schema_.tableName + "_" + colName;
+    if (!indexManager_->has_index(idxName)) {
+        return Result<std::vector<Record>>(
+            Status::Error(StatusCode::RecordNotFound, "Index not found: " + idxName));
+    }
+
+    std::vector<RecordId> rids;
+    Status st = include_low
+        ? indexManager_->range_scan_half_open(idxName, low, high, rids)
+        : indexManager_->range_scan_open_low(idxName, low, high, rids);
+    if (!st.ok()) {
+        return Result<std::vector<Record>>(st);
+    }
+
+    std::vector<Record> records;
+    records.reserve(rids.size());
+    for (const RecordId& rid : rids) {
+        auto r = recordManager_->get_record(rid, schema_.columns);
+        if (r.ok()) {
+            records.push_back(r.value());
+        }
+    }
+    return Result<std::vector<Record>>(std::move(records));
+}
+
 void Table::scan(std::function<void(RecordId, const std::vector<Value>&)> cb) const {
     requireUsable();
 
