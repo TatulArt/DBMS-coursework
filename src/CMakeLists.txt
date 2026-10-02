@@ -63,7 +63,6 @@ add_library(dbms_core
     metrics/MetricsCollector.h
     metrics/MetricsCollector.cpp
     metrics/MetricsReporter.h
-    metrics/MetricsReporter.cpp
     
     # Темпоральная персистентность (Задание №1 из допов)
     undo-log/UndoLogManager.h

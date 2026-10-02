@@ -360,3 +360,123 @@ SELECT SUM(score) FROM students;
 [2026.10.01-22:57:04.992 -> 2026.10.01-22:57:04.992] | Latency: 598 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: Use university;
 [2026.10.01-22:57:15.128 -> 2026.10.01-22:57:15.128] | Latency: 160 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
 USE university;
+[2026.10.02-11:44:38.836 -> 2026.10.02-11:44:38.836] | Latency: 267 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: use university;
+[2026.10.02-11:44:49.926 -> 2026.10.02-11:44:49.926] | Latency: 356 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+select * from students;
+[2026.10.02-11:45:43.34 -> 2026.10.02-11:45:43.35] | Latency: 1710 us | ClientID: interactive_session | HandlerID: executor | Status: INTERNAL_ERROR | Query: 
+insert into student (id, name, score, status) VALUE (5, Test_bro, 42, "nice")
+;
+[2026.10.02-11:46:12.166 -> 2026.10.02-11:46:12.167] | Latency: 226 us | ClientID: interactive_session | HandlerID: executor | Status: INTERNAL_ERROR | Query: 
+insert into student (id, name, score, status) VALUE (5, Test_bro, 42, "nice");
+[2026.10.02-11:46:16.365 -> 2026.10.02-11:46:16.366] | Latency: 326 us | ClientID: interactive_session | HandlerID: executor | Status: EXECUTION_ERROR | Query: 
+insert into students (id, name, score, status) VALUE (5, Test_bro, 42, "nice");
+[2026.10.02-11:46:37.701 -> 2026.10.02-11:46:37.704] | Latency: 3046 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+insert into students (id, name, score, status) VALUE (5, "Test_bro", 42, "nice");
+[2026.10.02-11:48:16.267 -> 2026.10.02-11:48:16.268] | Latency: 462 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+> insert into students (id, name, score, status) VALUE (5, "Test_bro", 421234567890987654321, "nice");
+[2026.10.02-11:48:20.311 -> 2026.10.02-11:48:20.311] | Latency: 95 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+> insert into students (id, name, score, status) VALUE (5, "Test_bro", 421234567890987654321, "nice");
+[2026.10.02-11:48:34.484 -> 2026.10.02-11:48:34.497] | Latency: 12687 us | ClientID: interactive_session | HandlerID: parser | Status: INTERNAL_ERROR | Query: 
+insert into students (id, name, score, status) VALUE (5, "Test_bro", 421234567890987654321, "nice");
+[2026.10.02-11:50:36.941 -> 2026.10.02-11:50:36.942] | Latency: 477 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+insert into students (id, name, score, status) VALUE (5, "Test_bro", 421, "niceqwertyuiopasdfghjklzxcvbnm"niceqwertyuiopasdfghjklzxcvbnm"niceqwertyuiopasdfghjklzxcvbnm"niceqwertyuiopasdfghjklzxcvbnm");
+[2026.10.02-11:50:56.468 -> 2026.10.02-11:50:56.468] | Latency: 236 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+insert into students (id, name, score, status) VALUE (5, "Test_bro", 421, "niceqwertyuiopasdfghjklzxc
+
+;
+[2026.10.02-11:51:16.964 -> 2026.10.02-11:51:16.964] | Latency: 223 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+insert into students (id, name, score, status) VALUE (5, "Test_bro", 421, "niceqwertyuiopasdfghjklzxcvbnm"niceqwertyuiopasdfghjklzxcvbnm"niceqwertyuiopas;
+[2026.10.02-11:51:19.704 -> 2026.10.02-11:51:19.704] | Latency: 607 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+insert into students (id, name, score, status) VALUE (5, "Test_bro", 421, "niceqwertyuiopasdfghjklzxcvbnm"niceqwertyuiopasdfghjklzxcvbnmniceqwertyuiopasdfghjklzxcvbnmniceqwertyuiopasdfghjklzxcvbnm");
+[2026.10.02-11:51:48.983 -> 2026.10.02-11:51:48.985] | Latency: 1632 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+insert into students (id, name, score, status) VALUE (5, "Test_bro", 421, "niceqwertyuiopasdfghjklzxcvbnm"niceqwertyuiopasdfghjklzxcvbnmniceqwertyuffgfgfjgfjgfjgfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+[2026.10.02-11:52:01.707 -> 2026.10.02-11:52:01.709] | Latency: 1363 us | ClientID: interactive_session | HandlerID: executor | Status: EXECUTION_ERROR | Query: 
+insert into students (id, name, score, status) VALUE (5, "Test_bro", 421, "niceqwertyuiopa");
+[2026.10.02-11:52:26.636 -> 2026.10.02-11:52:26.637] | Latency: 653 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+insert into students (id, name, score, status) VALUE (5, "Test_bro", 421, "niceqwertyuiopasdfghjklzxcvbnm"niceqwertyuiopasdfghjklzxcvbnmniceqwertyuffgfgfjgfjgfjgfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+[2026.10.02-11:52:29.301 -> 2026.10.02-11:52:29.305] | Latency: 3222 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+insert into students (id, name, score, status) VALUE (99, "Test_bro", 421, "niceqwertyuiopasdfghjklzxcvbnm"niceqwertyuiopasdfghjklzxcvbnmniceqwertyuiopasdfghjklzxcvbnmniceqwertyuiopasdfghjklzxcvbnm");
+[2026.10.02-11:53:44.859 -> 2026.10.02-11:53:44.860] | Latency: 1296 us | ClientID: interactive_session | HandlerID: executor | Status: EXECUTION_ERROR | Query: 
+insert into students (id, name, score, status) VALUE (5, "Test_bro", 421, "niceqwertyuiopasdfghjklzxcvbnmggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggghhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh");
+[2026.10.02-11:54:04.554 -> 2026.10.02-11:54:04.554] | Latency: 93 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+    > insert into students (id, name, score, status) VALUE (15, "Test_bro", 421, "niceqwertyuiopasdfghjklzxcvbnmggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggghhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh");
+[2026.10.02-11:54:31.576 -> 2026.10.02-11:54:31.576] | Latency: 96 us | ClientID: interactive_session | HandlerID: parser | Status: SYNTAX_ERROR | Query: 
+    > insert into students (id, name, score, status) VALUE (15, "Test_bro", 421, "niceqwertyuiopasdfghjklzxcvbnmgggggggggggggggggggggggggggggg");
+[2026.10.02-11:54:49.846 -> 2026.10.02-11:54:49.848] | Latency: 1905 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+insert into students (id, name, score, status) VALUE (15, "Test_bro", 421, "niceqwertyuiopasdfghjklzxcvbnmggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggghhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh");
+[2026.10.02-11:55:04.427 -> 2026.10.02-11:55:04.427] | Latency: 505 us | ClientID: interactive_session | HandlerID: executor | Status: OK | Query: 
+select * from students;
+[2026.10.02-11:58:20.449 -> 2026.10.02-11:58:20.449] | Latency: 240 us | ClientID: batch_line_2 | HandlerID: parser | Status: SYNTAX_ERROR | Query: -- Пакетный режим демонстрации USE university;
+[2026.10.02-11:58:20.449 -> 2026.10.02-11:58:20.449] | Latency: 44 us | ClientID: batch_line_5 | HandlerID: parser | Status: SYNTAX_ERROR | Query:   -- SELECT с индексом SELECT * FROM students WHERE id > 0;
+[2026.10.02-11:58:20.449 -> 2026.10.02-11:58:20.449] | Latency: 37 us | ClientID: batch_line_8 | HandlerID: parser | Status: SYNTAX_ERROR | Query:   -- BETWEEN по индексной колонке SELECT * FROM students WHERE id BETWEEN 1 AND 3;
+[2026.10.02-11:58:20.449 -> 2026.10.02-11:58:20.449] | Latency: 37 us | ClientID: batch_line_11 | HandlerID: parser | Status: SYNTAX_ERROR | Query:   -- LIKE SELECT * FROM students WHERE name LIKE "I.*";
+[2026.10.02-11:58:20.449 -> 2026.10.02-11:58:20.449] | Latency: 35 us | ClientID: batch_line_14 | HandlerID: parser | Status: SYNTAX_ERROR | Query:   -- Агрегаты SELECT COUNT(*) FROM students;
+[2026.10.02-11:58:20.449 -> 2026.10.02-11:58:20.449] | Latency: 195 us | ClientID: batch_line_15 | HandlerID: executor | Status: INTERNAL_ERROR | Query:  SELECT AVG(score) FROM students;
+[2026.10.02-11:58:20.449 -> 2026.10.02-11:58:20.450] | Latency: 36 us | ClientID: batch_line_18 | HandlerID: parser | Status: SYNTAX_ERROR | Query:   -- INSERT INSERT INTO students (id, name, score, status) VALUE (50, "Batch_Test", 99, "active");
+[2026.10.02-11:58:20.450 -> 2026.10.02-11:58:20.450] | Latency: 36 us | ClientID: batch_line_21 | HandlerID: parser | Status: SYNTAX_ERROR | Query:   -- UPDATE UPDATE students SET score = 88 WHERE id == 50;
+[2026.10.02-11:58:20.450 -> 2026.10.02-11:58:20.450] | Latency: 37 us | ClientID: batch_line_24 | HandlerID: parser | Status: SYNTAX_ERROR | Query:   -- DELETE DELETE FROM students WHERE id == 50;
+[2026.10.02-11:58:20.450 -> 2026.10.02-11:58:20.450] | Latency: 36 us | ClientID: batch_line_27 | HandlerID: parser | Status: SYNTAX_ERROR | Query:   -- Итоговый SELECT SELECT * FROM students;
+[2026.10.02-11:59:16.6 -> 2026.10.02-11:59:16.6] | Latency: 419 us | ClientID: batch_line_2 | HandlerID: executor | Status: OK | Query:  USE university;
+[2026.10.02-11:59:16.7 -> 2026.10.02-11:59:16.8] | Latency: 856 us | ClientID: batch_line_3 | HandlerID: executor | Status: OK | Query:  SELECT * FROM students WHERE id > 0;
+[2026.10.02-11:59:16.8 -> 2026.10.02-11:59:16.8] | Latency: 213 us | ClientID: batch_line_5 | HandlerID: executor | Status: OK | Query:   SELECT * FROM students WHERE id BETWEEN 1 AND 3;
+[2026.10.02-11:59:16.8 -> 2026.10.02-11:59:16.8] | Latency: 304 us | ClientID: batch_line_7 | HandlerID: executor | Status: OK | Query:   SELECT * FROM students WHERE name LIKE "I.*";
+[2026.10.02-11:59:16.8 -> 2026.10.02-11:59:16.8] | Latency: 170 us | ClientID: batch_line_9 | HandlerID: executor | Status: OK | Query:   SELECT COUNT(*) FROM students;
+[2026.10.02-11:59:16.8 -> 2026.10.02-11:59:16.9] | Latency: 149 us | ClientID: batch_line_10 | HandlerID: executor | Status: OK | Query:  SELECT AVG(score) FROM students;
+[2026.10.02-11:59:16.9 -> 2026.10.02-11:59:16.9] | Latency: 482 us | ClientID: batch_line_12 | HandlerID: executor | Status: OK | Query:   INSERT INTO students (id, name, score, status) VALUE (50, "Batch_Test", 99, "active");
+[2026.10.02-11:59:16.9 -> 2026.10.02-11:59:16.10] | Latency: 350 us | ClientID: batch_line_14 | HandlerID: executor | Status: OK | Query:   UPDATE students SET score = 88 WHERE id == 50;
+[2026.10.02-11:59:16.10 -> 2026.10.02-11:59:16.10] | Latency: 280 us | ClientID: batch_line_16 | HandlerID: executor | Status: OK | Query:   DELETE FROM students WHERE id == 50;
+[2026.10.02-11:59:16.10 -> 2026.10.02-11:59:16.10] | Latency: 193 us | ClientID: batch_line_18 | HandlerID: executor | Status: OK | Query:   SELECT * FROM students;
+[2026.10.02-12:03:47.553 -> 2026.10.02-12:03:47.554] | Latency: 677 us | ClientID: batch_line_2 | HandlerID: executor | Status: OK | Query:  USE university;
+[2026.10.02-12:03:47.554 -> 2026.10.02-12:03:47.555] | Latency: 918 us | ClientID: batch_line_3 | HandlerID: executor | Status: OK | Query:  SELECT * FROM students WHERE id > 0;
+[2026.10.02-12:03:47.555 -> 2026.10.02-12:03:47.555] | Latency: 221 us | ClientID: batch_line_5 | HandlerID: executor | Status: OK | Query:   SELECT * FROM students WHERE id BETWEEN 1 AND 3;
+[2026.10.02-12:03:47.555 -> 2026.10.02-12:03:47.556] | Latency: 412 us | ClientID: batch_line_7 | HandlerID: executor | Status: OK | Query:   SELECT * FROM students WHERE name LIKE "I.*";
+[2026.10.02-12:03:47.556 -> 2026.10.02-12:03:47.556] | Latency: 184 us | ClientID: batch_line_9 | HandlerID: executor | Status: OK | Query:   SELECT COUNT(*) FROM students;
+[2026.10.02-12:03:47.556 -> 2026.10.02-12:03:47.556] | Latency: 151 us | ClientID: batch_line_10 | HandlerID: executor | Status: OK | Query:  SELECT AVG(score) FROM students;
+[2026.10.02-12:03:47.556 -> 2026.10.02-12:03:47.557] | Latency: 536 us | ClientID: batch_line_12 | HandlerID: executor | Status: OK | Query:   INSERT INTO students (id, name, score, status) VALUE (50, "Batch_Test", 99, "active");
+[2026.10.02-12:03:47.557 -> 2026.10.02-12:03:47.557] | Latency: 369 us | ClientID: batch_line_14 | HandlerID: executor | Status: OK | Query:   UPDATE students SET score = 88 WHERE id == 50;
+[2026.10.02-12:03:47.557 -> 2026.10.02-12:03:47.559] | Latency: 1360 us | ClientID: batch_line_16 | HandlerID: executor | Status: OK | Query:   DELETE FROM students WHERE id == 50;
+[2026.10.02-12:03:47.559 -> 2026.10.02-12:03:47.561] | Latency: 2365 us | ClientID: batch_line_18 | HandlerID: executor | Status: OK | Query:   SELECT * FROM students;
+[2026.10.02-12:08:14.388 -> 2026.10.02-12:08:14.389] | Latency: 239 us | ClientID: batch_line_2 | HandlerID: executor | Status: OK | Query:  USE university;
+[2026.10.02-12:08:14.390 -> 2026.10.02-12:08:14.391] | Latency: 953 us | ClientID: batch_line_3 | HandlerID: executor | Status: OK | Query:  SELECT * FROM students WHERE id > 0;
+[2026.10.02-12:08:14.392 -> 2026.10.02-12:08:14.395] | Latency: 3212 us | ClientID: batch_line_5 | HandlerID: executor | Status: OK | Query:   SELECT * FROM students WHERE id BETWEEN 1 AND 3;
+[2026.10.02-12:08:14.403 -> 2026.10.02-12:08:14.403] | Latency: 470 us | ClientID: batch_line_7 | HandlerID: executor | Status: OK | Query:   SELECT * FROM students WHERE name LIKE "I.*";
+[2026.10.02-12:08:14.403 -> 2026.10.02-12:08:14.403] | Latency: 216 us | ClientID: batch_line_9 | HandlerID: executor | Status: OK | Query:   SELECT COUNT(*) FROM students;
+[2026.10.02-12:08:14.403 -> 2026.10.02-12:08:14.404] | Latency: 245 us | ClientID: batch_line_10 | HandlerID: executor | Status: OK | Query:  SELECT AVG(score) FROM students;
+[2026.10.02-12:08:14.404 -> 2026.10.02-12:08:14.406] | Latency: 2598 us | ClientID: batch_line_12 | HandlerID: executor | Status: OK | Query:   INSERT INTO students (id, name, score, status) VALUE (51, "Русский", 99, "Я");
+[2026.10.02-12:08:14.406 -> 2026.10.02-12:08:14.407] | Latency: 281 us | ClientID: batch_line_14 | HandlerID: executor | Status: OK | Query:   UPDATE students SET score = 88 WHERE id == 50;
+[2026.10.02-12:08:14.407 -> 2026.10.02-12:08:14.407] | Latency: 194 us | ClientID: batch_line_16 | HandlerID: executor | Status: OK | Query:   DELETE FROM students WHERE id == 50;
+[2026.10.02-12:08:14.407 -> 2026.10.02-12:08:14.407] | Latency: 240 us | ClientID: batch_line_18 | HandlerID: executor | Status: OK | Query:   SELECT * FROM students;
+[2026.10.02-12:09:00.740 -> 2026.10.02-12:09:00.740] | Latency: 355 us | ClientID: batch_line_2 | HandlerID: executor | Status: OK | Query:  USE university;
+[2026.10.02-12:09:00.744 -> 2026.10.02-12:09:00.744] | Latency: 556 us | ClientID: batch_line_3 | HandlerID: executor | Status: OK | Query:  SELECT * FROM students WHERE id > 0;
+[2026.10.02-12:09:00.744 -> 2026.10.02-12:09:00.745] | Latency: 261 us | ClientID: batch_line_5 | HandlerID: executor | Status: OK | Query:   SELECT * FROM students WHERE id BETWEEN 1 AND 3;
+[2026.10.02-12:09:00.748 -> 2026.10.02-12:09:00.748] | Latency: 377 us | ClientID: batch_line_7 | HandlerID: executor | Status: OK | Query:   SELECT * FROM students WHERE name LIKE "I.*";
+[2026.10.02-12:09:00.748 -> 2026.10.02-12:09:00.748] | Latency: 176 us | ClientID: batch_line_9 | HandlerID: executor | Status: OK | Query:   SELECT COUNT(*) FROM students;
+[2026.10.02-12:09:00.748 -> 2026.10.02-12:09:00.749] | Latency: 160 us | ClientID: batch_line_10 | HandlerID: executor | Status: OK | Query:  SELECT AVG(score) FROM students;
+[2026.10.02-12:09:00.749 -> 2026.10.02-12:09:00.749] | Latency: 184 us | ClientID: batch_line_12 | HandlerID: executor | Status: EXECUTION_ERROR | Query:   INSERT INTO students (id, name, score, status) VALUE (51, "Русский", 99, "Я");
+[2026.10.02-12:09:00.749 -> 2026.10.02-12:09:00.756] | Latency: 7302 us | ClientID: batch_line_14 | HandlerID: executor | Status: OK | Query:   UPDATE students SET score = 8888 WHERE id == 51;
+[2026.10.02-12:09:00.756 -> 2026.10.02-12:09:00.756] | Latency: 302 us | ClientID: batch_line_16 | HandlerID: executor | Status: OK | Query:   SELECT * FROM students;
+[2026.10.02-12:09:00.756 -> 2026.10.02-12:09:00.757] | Latency: 304 us | ClientID: batch_line_18 | HandlerID: executor | Status: OK | Query:   DELETE FROM students WHERE id == 51;
+[2026.10.02-12:09:00.757 -> 2026.10.02-12:09:00.757] | Latency: 175 us | ClientID: batch_line_20 | HandlerID: executor | Status: OK | Query:   SELECT * FROM students;
+[2026.10.02-12:09:16.964 -> 2026.10.02-12:09:16.965] | Latency: 683 us | ClientID: batch_line_2 | HandlerID: executor | Status: OK | Query:  USE university;
+[2026.10.02-12:09:16.965 -> 2026.10.02-12:09:16.966] | Latency: 538 us | ClientID: batch_line_3 | HandlerID: executor | Status: OK | Query:  SELECT * FROM students WHERE id > 0;
+[2026.10.02-12:09:16.966 -> 2026.10.02-12:09:16.966] | Latency: 308 us | ClientID: batch_line_5 | HandlerID: executor | Status: OK | Query:   SELECT * FROM students WHERE id BETWEEN 1 AND 3;
+[2026.10.02-12:09:16.966 -> 2026.10.02-12:09:16.967] | Latency: 330 us | ClientID: batch_line_7 | HandlerID: executor | Status: OK | Query:   SELECT * FROM students WHERE name LIKE "I.*";
+[2026.10.02-12:09:16.967 -> 2026.10.02-12:09:16.967] | Latency: 206 us | ClientID: batch_line_9 | HandlerID: executor | Status: OK | Query:   SELECT COUNT(*) FROM students;
+[2026.10.02-12:09:16.967 -> 2026.10.02-12:09:16.967] | Latency: 172 us | ClientID: batch_line_10 | HandlerID: executor | Status: OK | Query:  SELECT AVG(score) FROM students;
+[2026.10.02-12:09:16.967 -> 2026.10.02-12:09:16.974] | Latency: 7123 us | ClientID: batch_line_12 | HandlerID: executor | Status: OK | Query:   INSERT INTO students (id, name, score, status) VALUE (51, "Русский", 99, "Я");
+[2026.10.02-12:09:16.974 -> 2026.10.02-12:09:16.980] | Latency: 5701 us | ClientID: batch_line_14 | HandlerID: executor | Status: OK | Query:   UPDATE students SET score = 8888 WHERE id == 51;
+[2026.10.02-12:09:16.981 -> 2026.10.02-12:09:16.983] | Latency: 2259 us | ClientID: batch_line_16 | HandlerID: executor | Status: OK | Query:   SELECT * FROM students;
+[2026.10.02-12:09:16.983 -> 2026.10.02-12:09:16.988] | Latency: 4706 us | ClientID: batch_line_18 | HandlerID: executor | Status: OK | Query:   DELETE FROM students WHERE id == 51;
+[2026.10.02-12:09:16.988 -> 2026.10.02-12:09:16.988] | Latency: 311 us | ClientID: batch_line_20 | HandlerID: executor | Status: OK | Query:   SELECT * FROM students;
+[2026.10.02-12:11:01.29 -> 2026.10.02-12:11:01.29] | Latency: 436 us | ClientID: batch_line_2 | HandlerID: executor | Status: OK | Query:  USE university;
+[2026.10.02-12:11:01.30 -> 2026.10.02-12:11:01.31] | Latency: 841 us | ClientID: batch_line_3 | HandlerID: executor | Status: OK | Query:  SELECT * FROM students WHERE id > 0;
+[2026.10.02-12:11:01.31 -> 2026.10.02-12:11:01.32] | Latency: 213 us | ClientID: batch_line_5 | HandlerID: executor | Status: OK | Query:   SELECT * FROM students WHERE id BETWEEN 1 AND 3;
+[2026.10.02-12:11:01.32 -> 2026.10.02-12:11:01.32] | Latency: 276 us | ClientID: batch_line_7 | HandlerID: executor | Status: OK | Query:   SELECT * FROM students WHERE name LIKE "I.*";
+[2026.10.02-12:11:01.32 -> 2026.10.02-12:11:01.32] | Latency: 260 us | ClientID: batch_line_8 | HandlerID: executor | Status: OK | Query:  SELECT * FROM students WHERE name LIKE ".*a.*";
+[2026.10.02-12:11:01.32 -> 2026.10.02-12:11:01.32] | Latency: 159 us | ClientID: batch_line_10 | HandlerID: executor | Status: OK | Query:   SELECT COUNT(*) FROM students;
+[2026.10.02-12:11:01.32 -> 2026.10.02-12:11:01.33] | Latency: 195 us | ClientID: batch_line_11 | HandlerID: executor | Status: OK | Query:  SELECT AVG(score) FROM students;
+[2026.10.02-12:11:01.33 -> 2026.10.02-12:11:01.43] | Latency: 10767 us | ClientID: batch_line_13 | HandlerID: executor | Status: OK | Query:   INSERT INTO students (id, name, score, status) VALUE (51, "Русский", 99, "Я");
+[2026.10.02-12:11:01.43 -> 2026.10.02-12:11:01.44] | Latency: 578 us | ClientID: batch_line_15 | HandlerID: executor | Status: OK | Query:   UPDATE students SET score = 8888 WHERE id == 51;
+[2026.10.02-12:11:01.44 -> 2026.10.02-12:11:01.44] | Latency: 247 us | ClientID: batch_line_17 | HandlerID: executor | Status: OK | Query:   SELECT * FROM students;
+[2026.10.02-12:11:01.44 -> 2026.10.02-12:11:01.45] | Latency: 330 us | ClientID: batch_line_19 | HandlerID: executor | Status: OK | Query:   DELETE FROM students WHERE id == 51;
+[2026.10.02-12:11:01.45 -> 2026.10.02-12:11:01.45] | Latency: 203 us | ClientID: batch_line_21 | HandlerID: executor | Status: OK | Query:   SELECT * FROM students;
